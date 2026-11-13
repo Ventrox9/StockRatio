@@ -444,3 +444,20 @@ dialog::backdrop { background: rgba(10, 15, 22, .55); }
   .pf-note .btn { width: 100%; justify-content: center; height: 44px; }
   .toast { bottom: max(24px, env(safe-area-inset-bottom)); }
 }
+
+/* compact mobile header + currency switch */
+.meta-short { display: none; }
+@media (max-width: 760px) {
+  .top-inner { flex-wrap: nowrap; padding-top: 8px; padding-bottom: 8px; }
+  .brand { flex: none; }
+  .brand svg { width: 28px; height: 28px; }
+  .brand .sub { display: none; }
+  .meta { width: auto; text-align: right; font-size: 11.5px; line-height: 1.35; }
+  .meta .meta-long { display: none; }
+  .meta .meta-short { display: inline; }
+  .modes { margin-top: 0; }
+  .modes button { padding: 10px 8px; }
+  .pf-top { flex-wrap: nowrap; }
+  .cur-seg { width: auto; flex: none; }
+  .cur-seg button { flex: 0 0 auto; padding: 6px 12px; }
+}

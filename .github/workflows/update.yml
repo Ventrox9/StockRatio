@@ -59,6 +59,12 @@ jobs:
           PREVIOUS_DATA: ${{ steps.pages.outputs.base_url }}/data/stocks.json
         run: python -m stockratio.build --workers 6
 
+      - name: Cache-Busting (CSS/JS-Version = Commit + Datenstand)
+        run: |
+          VERSION="${GITHUB_SHA::8}-$(date -u +%Y%m%d%H%M)"
+          sed -i "s/__VERSION__/${VERSION}/g" site/index.html
+          grep -o 'v=[^"]*' site/index.html
+
       - uses: actions/upload-pages-artifact@v3
         with:
           path: site
