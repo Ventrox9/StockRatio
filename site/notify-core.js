@@ -23,6 +23,8 @@
   const N0 = nf(0), N1 = nf(1), N2 = nf(2);
   const pct = (v, d = 0) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${(d ? N1 : N0).format(Math.abs(v * 100))} %`;
   const px = (v, cur) => `${(v >= 1000 ? N0 : N2).format(v)} ${cur || ''}`.trim();
+  // link that opens exactly these stocks in the screener (best score first)
+  const symsUrl = (syms) => `#syms=${syms.slice(0, 40).map(encodeURIComponent).join(',')}&s=score-`;
   const short = (s) => (s.n || s.s).replace(/,? (Inc\.?|Corporation|Corp\.?|Holdings?|N\.V\.|AG|SE|plc|Ltd\.?|Limited|S\.A\.)$/i, '');
 
   function consCat(rec, nA) {
@@ -78,9 +80,9 @@
         const down = labDelta >= 2 || (nLab === 4 && oLab >= 0 && oLab < 4) || catDelta >= 2 || (oCat !== null && oCat <= 1 && nCat !== null && nCat >= 3);
         const up = labDelta <= -2 || (nLab === 0 && oLab > 0) || catDelta <= -2;
         if (down && S.down) {
-          alerts.push({ kind: 'down', sym, title: `⚠ ${short(s)}: Bewertung stark verschlechtert`, body: `${where} · ${parts.join(' · ')}`, url: held.has(sym) ? '#m=pf' : `#q=${encodeURIComponent(sym)}` });
+          alerts.push({ kind: 'down', sym, title: `⚠ ${short(s)}: Bewertung stark verschlechtert`, body: `${where} · ${parts.join(' · ')}`, url: symsUrl([sym]) });
         } else if (up && S.up) {
-          alerts.push({ kind: 'up', sym, title: `↑ ${short(s)}: Bewertung deutlich verbessert`, body: `${where} · ${parts.join(' · ')}`, url: `#q=${encodeURIComponent(sym)}` });
+          alerts.push({ kind: 'up', sym, title: `↑ ${short(s)}: Bewertung deutlich verbessert`, body: `${where} · ${parts.join(' · ')}`, url: symsUrl([sym]) });
         }
       }
     }
@@ -114,7 +116,7 @@
           sym: fresh[0].s,
           title: fresh.length === 1 ? `🚀 Neues starkes Kaufsignal: ${short(fresh[0])}` : `🚀 ${fresh.length} neue starke Kaufsignale`,
           body: top.join(' · ') + (fresh.length > 3 ? ` · und ${fresh.length - 3} weitere` : ''),
-          url: fresh.length === 1 ? `#q=${encodeURIComponent(fresh[0].s)}` : '#p=top',
+          url: symsUrl(fresh.map((s) => s.s)),
         });
       }
     }
@@ -129,7 +131,7 @@
         kind: 'down', sym: '',
         title: `⚠ ${rating.length} Bewertungsänderungen in Portfolio/Favoriten`,
         body: `${downs} Verschlechterungen, ${rating.length - downs} Verbesserungen: ` + rating.map((a) => a.title.replace(/^[^ ]+ /, '').split(':')[0]).join(', '),
-        url: '#m=pf',
+        url: symsUrl(rating.map((a) => a.sym)),
       });
     }
     return { alerts: out, snapshot: snapshotOf(data, lvHits), isNew };
@@ -161,6 +163,26 @@
     if (tops.length) parts.push(`Top-Kaufsignale: ${tops.map(short).join(', ')}`);
     if (ctx.planCount) parts.push(`Kaufplan: ${ctx.planCount} Position${ctx.planCount > 1 ? 'en' : ''}`);
     return { kind: 'tradeday', sym: '', title: `📈 Handelstag ${weekday}`, body: parts.join(' · '), url: ctx.planCount ? '#m=pf&open=plan' : '#m=pf' };
+  }
+
+  /* show notes as system notifications (page or service worker registration) – at most 4 */
+  async function display(reg, notes) {
+    const list = notes.slice(0, 4);
+    if (notes.length > 4) {
+      const rest = notes.slice(3);
+      const syms = rest.map((n) => n.sym).filter(Boolean);
+      list[3] = { kind: 'more', sym: '', title: `StockRatio: ${rest.length} weitere Hinweise`, body: rest.map((n) => n.title).join(' · '), url: syms.length ? symsUrl(syms) : '#m=pf' };
+    }
+    for (const n of list) {
+      await reg.showNotification(n.title, {
+        body: n.body,
+        icon: 'icons/icon-192.png',
+        badge: 'icons/badge-96.png',
+        tag: `sr-${n.kind || 'info'}-${n.sym || ''}`,
+        renotify: true,
+        data: { url: n.url || '' },
+      });
+    }
   }
 
   /* ---- tiny IndexedDB key/value store (works in page and service worker) */
@@ -212,16 +234,16 @@
     };
   }
 
-  async function addHistory(notes) {
+  async function addHistory(notes, via) {
     if (!notes.length) return;
     const hist = (await idb.get('notify.history')) || [];
     const at = new Date().toISOString();
-    notes.forEach((n) => hist.unshift({ at, title: n.title, body: n.body, url: n.url }));
+    notes.slice().reverse().forEach((n) => hist.unshift({ at, title: n.title, body: n.body, url: n.url, via }));
     await idb.set('notify.history', hist.slice(0, 30));
   }
 
   /* Full check: new data vs. last snapshot -> notifications to show. Shared by page & worker. */
-  async function check(data, { type = 'update' } = {}) {
+  async function check(data, { type = 'update', via = 'push' } = {}) {
     const { ctx, settings } = await loadContext();
     const prev = await idb.get('notify.snapshot');
     const { alerts, snapshot, isNew } = evaluate({ data, prev, ctx, settings });
@@ -229,9 +251,9 @@
     let notes = settings.enabled ? alerts : [];
     if (type === 'tradeday' && settings.enabled && settings.tradeday) notes = [tradedaySummary({ data, ctx, alerts, cur: ctx.cur }), ...notes];
     if (type === 'test') notes = [{ kind: 'test', title: '✅ StockRatio: Push funktioniert', body: 'Diese Test-Nachricht kam über GitHub Actions auf dein Gerät.', url: '#m=pf' }, ...notes];
-    await addHistory(notes);
+    await addHistory(notes, via);
     return { notes, baseline: !prev };
   }
 
-  g.SRNotify = { DEFAULTS, SETTINGS_KEY, LABELS, evaluate, tradedaySummary, snapshotOf, strongBuy, idb, loadContext, addHistory, check };
+  g.SRNotify = { DEFAULTS, SETTINGS_KEY, LABELS, evaluate, tradedaySummary, snapshotOf, strongBuy, symsUrl, display, idb, loadContext, addHistory, check };
 })(self);

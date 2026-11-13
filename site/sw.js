@@ -2,29 +2,10 @@
    checks portfolio/favourites/market on the device and shows notifications. */
 importScripts('notify-core.js?v=__VERSION__');
 
-const ICON = 'icons/icon-192.png';
-const BADGE = 'icons/badge-96.png';
-
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
 
-async function show(notes) {
-  // at most 4 separate notifications, the rest is summarised
-  const list = notes.slice(0, 4);
-  if (notes.length > 4) {
-    list[3] = { title: `StockRatio: ${notes.length - 3} weitere Hinweise`, body: notes.slice(3).map((n) => n.title).join(' · '), url: '#m=pf' };
-  }
-  for (const n of list) {
-    await self.registration.showNotification(n.title, {
-      body: n.body,
-      icon: ICON,
-      badge: BADGE,
-      tag: `sr-${n.kind || 'info'}-${n.sym || ''}`,
-      renotify: true,
-      data: { url: n.url || '' },
-    });
-  }
-}
+const show = (notes) => SRNotify.display(self.registration, notes);
 
 self.addEventListener('push', (event) => {
   event.waitUntil((async () => {
@@ -33,7 +14,7 @@ self.addEventListener('push', (event) => {
     try {
       const res = await fetch(`data/stocks.json?t=${Date.now()}`, { cache: 'no-store' });
       const data = await res.json();
-      const { notes } = await SRNotify.check(data, { type: msg.type || 'update' });
+      const { notes } = await SRNotify.check(data, { type: msg.type || 'update', via: 'push' });
       if (notes.length) await show(notes);
     } catch (err) {
       if (msg.type === 'test' || msg.type === 'tradeday') {

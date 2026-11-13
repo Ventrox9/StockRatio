@@ -24,7 +24,7 @@ def test_missing_secrets_sends_nothing(monkeypatch, capsys):
     from stockratio import notify
     monkeypatch.delenv("VAPID_PRIVATE_KEY", raising=False)
     monkeypatch.delenv("PUSH_SUBSCRIPTIONS", raising=False)
-    assert notify.main(["--type", "test"]) == 0
+    assert notify.main(["--type", "test"]) == 1  # missing secrets must fail the workflow
     assert "nicht eingerichtet" in capsys.readouterr().out
 
 

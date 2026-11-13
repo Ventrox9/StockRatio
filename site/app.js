@@ -127,6 +127,7 @@ const DEFAULT_FILTERS = {
 
 const state = {
   q: '',
+  syms: [], // exact selection, e.g. from a notification ("#syms=AAPL,MSFT")
   preset: '',
   view: 'overview',
   sort: { key: 'mcap', dir: -1 },
@@ -442,6 +443,7 @@ function parseNum(v) {
 
 function matches(s) {
   const f = state.f;
+  if (state.syms.length && !state.syms.includes(s.s)) return false;
   if (state.q) {
     const q = state.q.toLowerCase();
     if (!(s.s.toLowerCase().includes(q) || (s.n || '').toLowerCase().includes(q) || (s.isin || '').toLowerCase() === q)) return false;
@@ -655,10 +657,12 @@ function syncFilterInputs() {
   if (limits) $('#fMore').open = true;
 
   const box = $('#activeFilters');
-  box.hidden = active.length === 0;
-  box.innerHTML = active.map((k) =>
+  const n = state.syms.length;
+  box.hidden = active.length === 0 && !n;
+  box.innerHTML = (n ? `<button class="afchip af-sel" data-clear="syms" aria-label="Auswahl aufheben">🔔 Auswahl: ${n} ${n === 1 ? 'Aktie' : 'Aktien'}<span aria-hidden="true">×</span></button>` : '')
+    + active.map((k) =>
     `<button class="afchip" data-clear="${k}" aria-label="Filter entfernen: ${esc(FILTER_TEXT[k](state.f[k]))}">${esc(FILTER_TEXT[k](state.f[k]))}<span aria-hidden="true">×</span></button>`).join('')
-    + (active.length > 1 ? '<button class="afclear" data-clear="*">Alle entfernen</button>' : '');
+    + (active.length + (n ? 1 : 0) > 1 ? '<button class="afclear" data-clear="*">Alle entfernen</button>' : '');
 }
 
 function update({ resetPage = true } = {}) {
@@ -680,6 +684,7 @@ function writeHash() {
   const p = new URLSearchParams();
   if (state.mode === 'portfolio') p.set('m', 'pf');
   if (state.q) p.set('q', state.q);
+  if (state.syms.length) p.set('syms', state.syms.join(','));
   if (state.preset) p.set('p', state.preset);
   if (state.view !== 'overview') p.set('v', state.view);
   if (!(state.sort.key === 'mcap' && state.sort.dir === -1)) p.set('s', `${state.sort.key}${state.sort.dir === 1 ? '+' : '-'}`);
@@ -694,6 +699,7 @@ function writeHash() {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   state.q = p.get('q') || '';
+  state.syms = (p.get('syms') || '').split(',').map((x) => x.trim()).filter(Boolean);
   state.mode = p.get('m') === 'pf' ? 'portfolio' : 'screener';
   const preset = p.get('p') === 'watch' ? 'fav' : p.get('p');
   state.preset = PRESETS.some((x) => x.id === preset) ? preset : '';
@@ -965,6 +971,7 @@ function bindEvents() {
 
   const resetAll = () => {
     state.q = ''; $('#q').value = '';
+    state.syms = [];
     state.preset = '';
     state.f = { ...DEFAULT_FILTERS };
     state.sort = { key: 'mcap', dir: -1 };
@@ -975,7 +982,8 @@ function bindEvents() {
   $('#activeFilters').addEventListener('click', (e) => {
     const b = e.target.closest('[data-clear]');
     if (!b) return;
-    if (b.dataset.clear === '*') state.f = { ...DEFAULT_FILTERS };
+    if (b.dataset.clear === '*') { state.f = { ...DEFAULT_FILTERS }; state.syms = []; }
+    else if (b.dataset.clear === 'syms') state.syms = [];
     else state.f[b.dataset.clear] = DEFAULT_FILTERS[b.dataset.clear];
     update();
   });
@@ -2357,8 +2365,15 @@ async function runLocalCheck() {
   if (!self.SRNotify || !('indexedDB' in self) || !DATA) return;
   try {
     await mirrorAll();
-    const { notes } = await SRNotify.check(DATA, { type: 'update' });
-    if (notes.length) toast(`🔔 ${notes.length} neue${notes.length === 1 ? 'r Hinweis' : ' Hinweise'} – siehe Glocke oben`);
+    const { notes } = await SRNotify.check(DATA, { type: 'update', via: 'app' });
+    if (notes.length) {
+      // show them like a push would – otherwise they would only land in the history
+      let shown = false;
+      if ('Notification' in window && Notification.permission === 'granted' && 'serviceWorker' in navigator) {
+        try { await SRNotify.display(await navigator.serviceWorker.ready, notes); shown = true; } catch { /* fall back to toast */ }
+      }
+      if (!shown) toast(`🔔 ${notes.length} neue${notes.length === 1 ? 'r Hinweis' : ' Hinweise'} – siehe Glocke oben`);
+    }
     updateNotifyDot();
   } catch { /* storage not available */ }
 }
@@ -2432,12 +2447,15 @@ async function renderSettings() {
         <li>Testen: <a href="${base}/actions/workflows/notify.yml" target="_blank" rel="noopener">Actions → „Benachrichtigungen senden“ ↗</a>
           → <i>Run workflow</i> mit Typ <code>test</code>.</li>
       </ol>
+      <p class="muted small">Kontrolle: Unter <a href="${base}/actions/workflows/notify.yml" target="_blank" rel="noopener">Actions → „Benachrichtigungen senden“ ↗</a>
+        ist jeder Lauf grün, der wirklich gesendet hat – rot heißt: Secrets fehlen oder der Abo-Code ist abgelaufen.
+        Im Verlauf unten steht bei jedem Hinweis, ob er <b>per Push</b> oder <b>beim Öffnen der App</b> kam.</p>
       <p class="muted small">Mehrere Geräte: Codes als Liste eintragen – <code>[Code1, Code2]</code>. Nach „Gerät abmelden“ entsteht beim nächsten Aktivieren ein neuer Code.</p>
     </section>
 
     <section class="set-sec">
       <h3>🕑 Verlauf</h3>
-      ${hist.length ? `<ul class="set-hist">${hist.slice(0, 12).map((h) => `<li><a href="${esc(h.url || '#')}" data-set-close-link><b>${esc(h.title)}</b><span>${esc(h.body)}</span><small>${fmt(h.at)}</small></a></li>`).join('')}</ul>`
+      ${hist.length ? `<ul class="set-hist">${hist.slice(0, 12).map((h) => `<li><a href="${esc(h.url || '#')}" data-set-close-link><b>${esc(h.title)}</b><span>${esc(h.body)}</span><small>${fmt(h.at)}${h.via === 'push' ? ' · per Push' : h.via === 'app' ? ' · beim Öffnen der App' : ''}</small></a></li>`).join('')}</ul>`
       : '<p class="muted">Noch keine Hinweise. Die erste Prüfung legt den Vergleichsstand an – ab dem nächsten Datenupdate werden Änderungen gemeldet.</p>'}
     </section>
 
@@ -2459,6 +2477,7 @@ function applyLink(target) {
   const wantsPlan = new URLSearchParams(hash).get('open') === 'plan';
   ['#detail', '#settings', '#plan'].forEach((id) => { if ($(id).open) $(id).close(); });
   history.replaceState(history.state, '', hash ? `#${hash}` : location.pathname + location.search);
+  Object.assign(state, { q: '', syms: [], preset: '', f: { ...DEFAULT_FILTERS }, sort: { key: 'mcap', dir: -1 } });
   readHash();
   $('#q').value = state.q;
   setMode(state.mode);

@@ -106,7 +106,10 @@ Einstellbar (jeweils an/aus):
 **So funktioniert es:** Der Workflow „Benachrichtigungen senden“ schickt Mo–Fr um 05:31 UTC (≈ 6:30 / 7:30 Uhr)
 einen Web-Push ohne persönliche Daten. Der Service Worker auf dem Handy lädt die neuen Daten, vergleicht sie mit
 dem letzten Stand und deinem Portfolio (das das Gerät nie verlässt) und zeigt nur relevante Hinweise.
-Ohne Push-Einrichtung werden die Hinweise beim Öffnen der Seite angezeigt (Verlauf in den Einstellungen).
+Ohne Push (oder wenn die App vor dem Push geöffnet wird) prüft die Seite beim Öffnen und zeigt die Hinweise als
+Benachrichtigung an; im Verlauf steht jeweils „per Push“ oder „beim Öffnen der App“. Ein Tipp auf einen Hinweis öffnet
+genau die genannten Aktien im Screener (z. B. alle neuen Kaufsignale zusammen). Fehlen die Secrets, wird der
+Workflow rot statt still nichts zu senden.
 
 **Einmalige Einrichtung** (in der App unter 🔔 → „Push auch bei geschlossener App“):
 1. „Benachrichtigungen aktivieren“ und erlauben

@@ -89,8 +89,10 @@ def main(argv: list[str] | None = None) -> int:
     subs = parse_subscriptions(os.environ.get("PUSH_SUBSCRIPTIONS", ""))
     if not private_key or not subs:
         missing = [n for n, v in (("VAPID_PRIVATE_KEY", private_key), ("PUSH_SUBSCRIPTIONS", subs)) if not v]
-        print(f"Push nicht eingerichtet (fehlende Secrets: {', '.join(missing)}) – nichts gesendet.")
-        return 0
+        # fail visibly: a green run that sent nothing looks like a delivered notification
+        print(f"::error::Push nicht eingerichtet (fehlende Secrets: {', '.join(missing)}) – nichts gesendet. "
+              "Einrichtung: App → Glocke → „Push auch bei geschlossener App“.")
+        return 1
 
     kind = message_type(args.type)
     payload = {"type": kind, "sent": datetime.now(ZoneInfo("UTC")).isoformat(timespec="minutes")}

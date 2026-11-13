@@ -924,3 +924,5 @@ tr.row-warn td:first-child { box-shadow: inset 3px 0 0 var(--warn); }
 .portfolio > * { min-width: 0; }
 .pf-name .pf-date { display: block; }
 @media (max-width: 760px) { .pf-hold, .pf-pxi { display: none; } }
+.afchip.af-sel { color: var(--warn); background: var(--warn-soft); border-color: color-mix(in srgb, var(--warn) 35%, var(--border)); }
+.afchip.af-sel span { background: color-mix(in srgb, var(--warn) 16%, transparent); }
