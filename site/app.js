@@ -7,7 +7,10 @@
    ====================================================================== */
 
 const DATA_URL = 'data/stocks.json';
-const PAGE_SIZE = 50;
+const PAGE_SIZE = 50; // desktop table rows per page
+const CARD_STEP = 30; // mobile cards per "Mehr anzeigen"
+const MOBILE = window.matchMedia('(max-width: 760px)');
+const isMobile = () => MOBILE.matches;
 
 const SECTORS_DE = {
   'Technology': 'Technologie',
@@ -128,6 +131,7 @@ const state = {
   view: 'overview',
   sort: { key: 'mcap', dir: -1 },
   page: 1,
+  shown: CARD_STEP,
   f: { ...DEFAULT_FILTERS },
 };
 
@@ -239,12 +243,19 @@ for (const [key, label] of PILLARS) {
 COLUMNS.sVal.label = 'S-Bew.'; COLUMNS.sQual.label = 'S-Qual.'; COLUMNS.sGrow.label = 'S-Wachst.';
 COLUMNS.sAna.label = 'S-Anal.'; COLUMNS.sMom.label = 'S-Mom.';
 
+// [id, label, table columns, short label (mobile), card fields (mobile)]
 const VIEWS = [
-  ['overview', 'Übersicht', ['name', 'score', 'px', 'd1', 'mcap', 'pe', 'fpe', 'peg', 'valB', 'cons', 'up', 'rel52']],
-  ['valuation', 'Bewertung', ['name', 'score', 'sec', 'pe', 'fpe', 'fpeMed', 'peg', 'pb', 'ps', 'evEbitda', 'fcfY', 'divY', 'sVal']],
-  ['quality', 'Qualität & Wachstum', ['name', 'score', 'sec', 'roe', 'opm', 'npm', 'de', 'revG', 'epsG', 'epsGny', 'sQual', 'sGrow']],
-  ['analysts', 'Analysten & Momentum', ['name', 'score', 'cons', 'dist', 'nA', 'up', 'rev90', 'r52', 'rel52', 'ma200', 'hi52', 'beta', 'sAna', 'sMom']],
+  ['overview', 'Übersicht', ['name', 'score', 'px', 'd1', 'mcap', 'pe', 'fpe', 'peg', 'valB', 'cons', 'up', 'rel52'],
+    'Übersicht', ['fpe', 'peg', 'valB', 'cons', 'up', 'rel52']],
+  ['valuation', 'Bewertung', ['name', 'score', 'sec', 'pe', 'fpe', 'fpeMed', 'peg', 'pb', 'ps', 'evEbitda', 'fcfY', 'divY', 'sVal'],
+    'Bewertung', ['pe', 'fpe', 'fpeMed', 'peg', 'evEbitda', 'fcfY', 'divY', 'pb', 'ps']],
+  ['quality', 'Qualität & Wachstum', ['name', 'score', 'sec', 'roe', 'opm', 'npm', 'de', 'revG', 'epsG', 'epsGny', 'sQual', 'sGrow'],
+    'Qualität', ['roe', 'opm', 'de', 'revG', 'epsG', 'epsGny']],
+  ['analysts', 'Analysten & Momentum', ['name', 'score', 'cons', 'dist', 'nA', 'up', 'rev90', 'r52', 'rel52', 'ma200', 'hi52', 'beta', 'sAna', 'sMom'],
+    'Analysten', ['cons', 'nA', 'up', 'rev90', 'rel52', 'ma200']],
 ];
+// Extra sort options offered in the mobile sort menu (besides the view's fields).
+const MOBILE_SORT_EXTRA = ['score', 'mcap', 'name', 'd1'];
 
 function distMini(s) {
   if (!s.dist) return NA;
@@ -370,6 +381,13 @@ function renderHead() {
 }
 
 function renderBody() {
+  $('#resultCount').textContent = isMobile()
+    ? `${filtered.length.toLocaleString('de-DE')} Aktien`
+    : `${filtered.length.toLocaleString('de-DE')} von ${STOCKS.length.toLocaleString('de-DE')} Aktien`;
+  if (isMobile()) { renderCards(); return; }
+  $('#cards').innerHTML = '';
+  $('#more').hidden = true;
+  $('#emptyCards').hidden = true;
   const cols = currentView()[2];
   const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   state.page = Math.min(Math.max(1, state.page), pages);
@@ -380,8 +398,45 @@ function renderBody() {
     cols.map((key) => `<td class="${COLUMNS[key].cls || ''}">${COLUMNS[key].render(s)}</td>`).join('') +
     '</tr>').join('');
   $('#empty').hidden = filtered.length > 0;
-  $('#resultCount').textContent = `${filtered.length.toLocaleString('de-DE')} von ${STOCKS.length.toLocaleString('de-DE')} Aktien`;
   renderPager(pages);
+}
+
+function renderCards() {
+  $('#table tbody').innerHTML = '';
+  const fields = currentView()[4];
+  const rows = filtered.slice(0, state.shown);
+  $('#cards').innerHTML = rows.map((s) => {
+    const iso = countryIso(s.cty);
+    const score = isNum(s.score)
+      ? `<span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span>`
+      : '<span class="na">kein Score</span>';
+    const stale = s.stale ? ' <span class="stale">⚠</span>' : '';
+    return `<article class="scard" data-sym="${esc(s.s)}" tabindex="0">
+      <div class="sc-top">
+        <button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>
+        <div class="sc-name"><span class="nm">${esc(s.n)}</span>
+          <span class="tk">${esc(s.s)}${iso ? ' · ' + iso : ''} · ${esc(sectorDe(s.sec))}${stale}</span></div>
+        <div class="sc-score pill lv-${esc(s.label || 'Neutral')}">${score}</div>
+      </div>
+      <div class="sc-px"><span class="p">${priceFmt(s)}</span>${pct(s.d1, 1, true, true)}<span class="m">${mcapFmt(s.mcap)}</span></div>
+      <div class="sc-grid">${fields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
+    </article>`;
+  }).join('');
+  const rest = filtered.length - rows.length;
+  const more = $('#more');
+  more.hidden = rest <= 0;
+  more.textContent = `Weitere ${Math.min(CARD_STEP, rest)} anzeigen (noch ${rest.toLocaleString('de-DE')})`;
+  $('#emptyCards').hidden = filtered.length > 0;
+  $('#pager').innerHTML = '';
+}
+
+function renderSortSelect() {
+  const keys = [...new Set([...MOBILE_SORT_EXTRA, ...currentView()[4], state.sort.key])].filter((k) => COLUMNS[k]);
+  const names = { name: 'Name', score: 'Score', mcap: 'Marktkap.', d1: 'Tagesänderung' };
+  $('#sortSel').innerHTML = keys.map((k) =>
+    `<option value="${k}" ${k === state.sort.key ? 'selected' : ''}>${esc(names[k] || COLUMNS[k].label)}</option>`).join('');
+  $('#sortDir').textContent = state.sort.dir === 1 ? '↑' : '↓';
+  $('#sortDir').title = state.sort.dir === 1 ? 'aufsteigend' : 'absteigend';
 }
 
 function renderPager(pages) {
@@ -408,8 +463,8 @@ function renderPresets() {
 }
 
 function renderViews() {
-  $('#views').innerHTML = VIEWS.map(([id, label]) =>
-    `<button role="tab" data-view="${id}" aria-selected="${state.view === id}">${label}</button>`).join('');
+  $('#views').innerHTML = VIEWS.map(([id, label, , short]) =>
+    `<button role="tab" data-view="${id}" aria-selected="${state.view === id}"><span class="long">${label}</span><span class="short">${short || label}</span></button>`).join('');
 }
 
 function syncFilterInputs() {
@@ -429,13 +484,15 @@ function syncFilterInputs() {
 }
 
 function update({ resetPage = true } = {}) {
-  if (resetPage) state.page = 1;
+  if (resetPage) { state.page = 1; state.shown = CARD_STEP; }
   filtered = sortRows(STOCKS.filter(matches));
   renderHead();
   renderBody();
   document.querySelectorAll('#presets .chip').forEach((c) => c.setAttribute('aria-pressed', String(c.dataset.preset === state.preset)));
   document.querySelectorAll('#views button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.view === state.view)));
   syncFilterInputs();
+  renderSortSelect();
+  $('#applyFilters').textContent = `${filtered.length.toLocaleString('de-DE')} Aktien anzeigen`;
   writeHash();
 }
 
@@ -451,7 +508,8 @@ function writeHash() {
     if (v !== DEFAULT_FILTERS[k] && v !== '') p.set(k, v === true ? '1' : v);
   }
   const hash = p.toString();
-  history.replaceState(null, '', hash ? `#${hash}` : location.pathname + location.search);
+  // keep history.state so an open detail view / filter sheet can still be closed with "back"
+  history.replaceState(history.state, '', hash ? `#${hash}` : location.pathname + location.search);
 }
 
 function readHash() {
@@ -557,12 +615,12 @@ function openDetail(sym) {
       <div>
         <h2 id="dTitle">${esc(s.n)}</h2>
         <div class="tk">${esc(s.s)}${s.ex ? ' · ' + esc(s.ex) : ''}${s.isin ? ' · ISIN ' + esc(s.isin) : ''}${iso ? ' · ' + iso : ''}</div>
-        <div class="d-tags">${tags}</div>
-        <div class="d-price">${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small> <small class="muted">· ${mcapFmt(s.mcap)}</small></div>
-        ${s.stale ? `<p class="stale">⚠ Konnte zuletzt nicht aktualisiert werden – Daten vom ${esc(s.stale)}.</p>` : ''}
       </div>
       <button class="close" aria-label="Schließen" data-close>×</button>
     </div>
+    <div class="d-tags">${tags}</div>
+    <div class="d-price">${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small> <small class="muted">· ${mcapFmt(s.mcap)}</small></div>
+    ${s.stale ? `<p class="stale">⚠ Konnte zuletzt nicht aktualisiert werden – Daten vom ${esc(s.stale)}.</p>` : ''}
 
     <div class="d-grid">
       <section class="card lv-${esc(s.label || 'Neutral')}">
@@ -636,7 +694,10 @@ function openDetail(sym) {
       <button class="btn ghost" data-fav="${esc(s.s)}">${favs.has(s.s) ? '★ Aus Favoriten entfernen' : '☆ Zu Favoriten'}</button>
     </div>`;
   const dlg = $('#detail');
-  if (!dlg.open) dlg.showModal();
+  if (!dlg.open) {
+    dlg.showModal();
+    history.pushState({ sr: 'detail' }, '');
+  }
   dlg.scrollTop = 0;
 }
 
@@ -681,6 +742,21 @@ function toggleFav(sym) {
   store.set('stockratio.favs', [...favs]);
 }
 
+function setFiltersOpen(open, { fromHistory = false } = {}) {
+  const box = $('#filters');
+  if (box.hidden === !open) return;
+  box.hidden = !open;
+  $('#toggleFilters').setAttribute('aria-expanded', String(open));
+  if (isMobile()) {
+    document.body.classList.toggle('sheet-open', open);
+    if (open) history.pushState({ sr: 'filters' }, '');
+    else if (!fromHistory && history.state && history.state.sr === 'filters') history.back();
+    if (!open) window.scrollTo({ top: 0 });
+  } else {
+    store.set('stockratio.filtersOpen', open);
+  }
+}
+
 function bindEvents() {
   let qTimer;
   $('#q').addEventListener('input', (e) => {
@@ -688,19 +764,74 @@ function bindEvents() {
     qTimer = setTimeout(() => { state.q = e.target.value.trim(); update(); }, 150);
   });
 
-  $('#toggleFilters').addEventListener('click', (e) => {
-    const box = $('#filters');
-    box.hidden = !box.hidden;
-    e.currentTarget.setAttribute('aria-expanded', String(!box.hidden));
-    store.set('stockratio.filtersOpen', !box.hidden);
-  });
+  $('#toggleFilters').addEventListener('click', () => setFiltersOpen($('#filters').hidden));
+  $('#closeFilters').addEventListener('click', () => setFiltersOpen(false));
+  $('#applyFilters').addEventListener('click', () => setFiltersOpen(false));
 
-  $('#reset').addEventListener('click', () => {
+  const resetAll = () => {
     state.q = ''; $('#q').value = '';
     state.preset = '';
     state.f = { ...DEFAULT_FILTERS };
     state.sort = { key: 'mcap', dir: -1 };
     update();
+  };
+  $('#reset').addEventListener('click', resetAll);
+  $('#resetSheet').addEventListener('click', resetAll);
+
+  $('#sortSel').addEventListener('change', (e) => {
+    const key = e.target.value;
+    state.sort = { key, dir: COLUMNS[key].dir || -1 };
+    update();
+  });
+  $('#sortDir').addEventListener('click', () => { state.sort.dir *= -1; update(); });
+
+  $('#more').addEventListener('click', () => { state.shown += CARD_STEP; renderCards(); });
+
+  $('#cards').addEventListener('click', (e) => {
+    const fav = e.target.closest('[data-fav]');
+    if (fav) {
+      e.stopPropagation();
+      toggleFav(fav.dataset.fav);
+      fav.classList.toggle('on', favs.has(fav.dataset.fav));
+      renderPresets();
+      if (state.preset === 'watch' || state.f.index === 'FAV') update({ resetPage: false });
+      return;
+    }
+    const card = e.target.closest('[data-sym]');
+    if (card) openDetail(card.dataset.sym);
+  });
+  $('#cards').addEventListener('keydown', (e) => {
+    const card = e.target.closest('.scard');
+    if (card && e.key === 'Enter') openDetail(card.dataset.sym);
+  });
+
+  // "back" closes the detail view / filter sheet instead of leaving the page
+  window.addEventListener('popstate', () => {
+    const dlg = $('#detail');
+    if (dlg.open) dlg.close();
+    if (isMobile() && !$('#filters').hidden) setFiltersOpen(false, { fromHistory: true });
+    writeHash(); // the previous history entry may carry an older hash
+  });
+  $('#detail').addEventListener('close', () => {
+    if (history.state && history.state.sr === 'detail') history.back();
+  });
+
+  // desktop: "/" focuses the search
+  document.addEventListener('keydown', (e) => {
+    if (e.key === '/' && !e.ctrlKey && !e.metaKey && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName) && !$('#detail').open) {
+      e.preventDefault();
+      $('#q').focus();
+    }
+    if (e.key === 'Escape' && isMobile() && !$('#filters').hidden) setFiltersOpen(false);
+  });
+
+  // mobile: shadow under the sticky search bar once it sticks
+  const row = $('.search-row');
+  window.addEventListener('scroll', () => row.classList.toggle('stuck', window.scrollY > 60), { passive: true });
+
+  MOBILE.addEventListener('change', () => {
+    document.body.classList.remove('sheet-open');
+    update({ resetPage: false });
   });
 
   $('#export').addEventListener('click', exportCsv);
@@ -760,6 +891,8 @@ function bindEvents() {
     if (tr) openDetail(tr.dataset.sym);
   });
 
+  $('#q').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+
   $('#pager').addEventListener('click', (e) => {
     const b = e.target.closest('[data-page]');
     if (!b || b.disabled) return;
@@ -805,7 +938,7 @@ function fillSelects() {
 function renderMeta() {
   const d = new Date(DATA.generated);
   const when = isNaN(d) ? DATA.generated : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
-  $('#meta').innerHTML = `Datenstand <b>${esc(when)}</b> · ${STOCKS.length.toLocaleString('de-DE')} Aktien · Quelle: ${esc(DATA.source)}<br>
+  $('#meta').innerHTML = `Datenstand <b>${esc(when)}</b> · ${STOCKS.length.toLocaleString('de-DE')} Aktien<span class="meta-src"> · Quelle: ${esc(DATA.source)}</span><br>
     S&amp;P 500 (52 W): <b>${pct(DATA.sp500_52w, 1, true, true)}</b> · <a href="#erklaerung" style="color:inherit">Erklärungen</a>`;
   const w = DATA.weights || {};
   const names = { val: 'Bewertung (Forward-KGV, PEG, KGV, EV/EBITDA, FCF-Rendite – relativ zur Branche)', qual: 'Qualität (ROE, Margen, Verschuldung)', grow: 'Wachstum (Umsatz, Gewinn, erwartetes EPS-Wachstum)', ana: 'Analysten (Konsens, Kursziel-Potenzial, Gewinnrevisionen)', mom: 'Momentum (Performance vs. S&P 500, 200-Tage-Linie)' };
@@ -815,10 +948,11 @@ function renderMeta() {
 async function init() {
   readHash();
   bindEvents();
-  if (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k])) {
+  if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');
   }
+  if (!isMobile()) $('#q').placeholder = 'Name, Ticker oder ISIN suchen …  (Taste /)';
   $('#q').value = state.q;
   try {
     const res = await fetch(DATA_URL, { cache: 'no-cache' });

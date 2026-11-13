@@ -29,14 +29,21 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
           <input id="q" type="search" placeholder="Name, Ticker oder ISIN suchen …" autocomplete="off">
         </label>
-        <button class="btn" id="toggleFilters" aria-expanded="false" aria-controls="filters">Filter <span id="filterCount" class="count-badge" hidden></span></button>
-        <button class="btn ghost" id="reset">Zurücksetzen</button>
-        <button class="btn ghost" id="export" title="Aktuelle Auswahl als CSV herunterladen">CSV</button>
+        <button class="btn" id="toggleFilters" aria-expanded="false" aria-controls="filters">
+          <svg class="ico" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M7 12h10M10 18h4"/></svg>
+          <span class="btn-txt">Filter</span> <span id="filterCount" class="count-badge" hidden></span></button>
+        <button class="btn ghost desk-only" id="reset">Zurücksetzen</button>
+        <button class="btn ghost desk-only" id="export" title="Aktuelle Auswahl als CSV herunterladen">CSV</button>
       </div>
 
       <div class="presets" id="presets" role="group" aria-label="Schnellauswahl"></div>
 
-      <div class="filters" id="filters" hidden>
+      <div class="filters" id="filters" hidden role="dialog" aria-label="Filter">
+        <div class="sheet-head">
+          <b>Filter</b>
+          <button class="close" id="closeFilters" aria-label="Filter schließen">×</button>
+        </div>
+        <div class="filter-grid">
         <label>Index
           <select data-f="index">
             <option value="">Alle</option>
@@ -84,12 +91,24 @@
         <label>Kursziel-Potenzial min (%) <input data-f="upMin" type="number" step="5" inputmode="decimal" placeholder="z. B. 15"></label>
         <label class="check"><input data-f="noLoss" type="checkbox"> Verlustbringer ausblenden</label>
         <label class="check"><input data-f="minAnalysts" type="checkbox"> mind. 5 Analysten</label>
+        </div>
+        <div class="sheet-foot">
+          <button class="btn ghost" id="resetSheet">Zurücksetzen</button>
+          <button class="btn primary" id="applyFilters">Anzeigen</button>
+        </div>
       </div>
     </section>
 
     <section class="view-bar">
       <div class="seg" id="views" role="tablist" aria-label="Spaltenansicht"></div>
-      <div class="result-count" id="resultCount"></div>
+      <div class="view-right">
+        <div class="result-count" id="resultCount"></div>
+        <div class="sort-ctl mob-only">
+          <label for="sortSel">Sortieren</label>
+          <select id="sortSel"></select>
+          <button class="btn sort-dir" id="sortDir" aria-label="Sortierrichtung umkehren">↓</button>
+        </div>
+      </div>
     </section>
 
     <div class="table-wrap" id="tableWrap">
@@ -99,6 +118,9 @@
       </table>
       <div class="empty" id="empty" hidden>Keine Aktie erfüllt alle Filter. Lockere die Kriterien oder setze sie zurück.</div>
     </div>
+    <div class="cards" id="cards" aria-live="polite"></div>
+    <div class="empty mob-empty" id="emptyCards" hidden>Keine Aktie erfüllt alle Filter. Lockere die Kriterien oder setze sie zurück.</div>
+    <button class="btn more" id="more" hidden>Mehr anzeigen</button>
     <nav class="pager" id="pager" aria-label="Seiten"></nav>
 
     <section class="explain" id="erklaerung">
