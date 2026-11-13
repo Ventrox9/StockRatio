@@ -195,6 +195,69 @@ const planBtn = (s, long = false) => {
 const planBtnLabel = (on, long) => (long ? (on ? '✓ Im Kaufplan' : '+ Zum Kaufplan') : (on ? '✓' : '+'));
 let BYSYM = {};
 
+/* ---------------------------------------------------------------- themes & logos */
+
+const THEMES = [
+  ['auto', 'Automatisch', 'Hell oder Dunkel – wie dein Gerät'],
+  ['dark', 'Dunkel', 'Ruhiges Anthrazit, augenschonend'],
+  ['light', 'Hell', 'Klar und kontrastreich'],
+  ['sand', 'Beige', 'Warmes Papier, weich für die Augen'],
+];
+const THEME_KEY = 'stockratio.theme';
+let theme = store.get(THEME_KEY, 'auto');
+if (!THEMES.some((t) => t[0] === theme)) theme = 'auto';
+const DARK_MQ = window.matchMedia('(prefers-color-scheme: dark)');
+
+function applyTheme(t = theme) {
+  theme = t;
+  const root = document.documentElement;
+  if (t === 'auto') delete root.dataset.theme; else root.dataset.theme = t;
+  // status bar / browser chrome follows the header colour
+  const meta = document.getElementById('themeColor');
+  if (meta) meta.content = getComputedStyle(root).getPropertyValue('--surface').trim() || '#161a21';
+  document.querySelectorAll('[data-theme-pick]').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.themePick === theme)));
+}
+function setTheme(t) {
+  store.set(THEME_KEY, t);
+  applyTheme(t);
+}
+const themeOptionsHtml = () => THEMES.map(([id, label, desc]) =>
+  `<button role="menuitemradio" class="theme-opt" data-theme-pick="${id}" aria-checked="${theme === id}">
+    <span class="swatch sw-${id}" aria-hidden="true"><i></i><i></i><i></i></span>
+    <span class="theme-txt"><b>${label}</b><small>${desc}</small></span>
+    <span class="theme-check" aria-hidden="true">✓</span></button>`).join('');
+
+// Company logos: financialmodelingprep.com (by ticker, ~99 % coverage) -> favicon of the company website
+// -> coloured monogram. Failed URLs are remembered so re-renders don't retry them.
+const LOGO_FAIL = new Set();
+const logosOn = () => SETTINGS.logos !== false;
+function domainOf(web) {
+  try { return new URL(web).hostname.replace(/^www\./, ''); } catch { return ''; }
+}
+function logoSrc(s) {
+  const a = `https://financialmodelingprep.com/image-stock/${encodeURIComponent(s.s)}.png`;
+  if (!LOGO_FAIL.has(a)) return a;
+  const d = domainOf(s.web);
+  const b = d ? `https://icons.duckduckgo.com/ip3/${d}.ico` : '';
+  return b && !LOGO_FAIL.has(b) ? b : '';
+}
+function logoHtml(s, cls = '') {
+  const name = String(s.n || s.s).replace(/^(the)\s+/i, '');
+  const letter = (name.match(/[A-Za-z0-9ÄÖÜ]/) || ['?'])[0].toUpperCase();
+  let h = 0;
+  for (const ch of s.s) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  const src = logosOn() ? logoSrc(s) : '';
+  return `<span class="logo ${cls}" style="--h:${h}" aria-hidden="true"><span class="logo-l">${esc(letter)}</span>${src
+    ? `<img src="${esc(src)}" alt="" loading="lazy" decoding="async" data-logo="${esc(s.s)}" onload="this.parentNode.classList.add('has-img')" onerror="srLogoErr(this)">` : ''}</span>`;
+}
+window.srLogoErr = (img) => {
+  LOGO_FAIL.add(img.src);
+  const s = BYSYM[img.dataset.logo];
+  const next = s ? logoSrc(s) : '';
+  if (next && next !== img.src) img.src = next;
+  else img.remove();
+};
+
 /* ---------------------------------------------------------------- columns */
 
 function sectorMedian(s, key) {
@@ -225,8 +288,8 @@ const COLUMNS = {
     render: (s) => {
       const iso = countryIso(s.cty);
       const stale = s.stale ? `<span class="stale" title="Konnte heute nicht aktualisiert werden – Daten vom ${esc(s.stale)}">⚠</span>` : '';
-      return `<div class="name-cell"><button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>${planBtn(s)}
-        <div><span class="nm" title="${esc(s.n)}">${esc(s.n)}</span>
+      return `<div class="name-cell"><button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>${planBtn(s)}${logoHtml(s)}
+        <div class="nm-wrap"><span class="nm" title="${esc(s.n)}">${esc(s.n)}</span>
         <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : iso ? ' · ' + iso : ''}${stale}</span></div></div>`;
     },
   },
@@ -292,19 +355,17 @@ for (const [key, label] of PILLARS) {
 COLUMNS.sVal.label = 'S-Bew.'; COLUMNS.sQual.label = 'S-Qual.'; COLUMNS.sGrow.label = 'S-Wachst.';
 COLUMNS.sAna.label = 'S-Anal.'; COLUMNS.sMom.label = 'S-Mom.';
 
-// [id, label, table columns, short label (mobile), card fields (mobile)]
+// [id, label, table columns, short label (mobile), card key metrics (big), card details (small)]
 const VIEWS = [
   ['overview', 'Übersicht', ['name', 'score', 'px', 'd1', 'mcap', 'pe', 'fpe', 'peg', 'valB', 'cons', 'up', 'rel52'],
-    'Übersicht', ['fpe', 'peg', 'valB', 'cons', 'up', 'rel52']],
+    'Übersicht', ['fpe', 'up', 'cons'], ['peg', 'valB', 'pe', 'rel52', 'divY', 'r52']],
   ['valuation', 'Bewertung', ['name', 'score', 'sec', 'pe', 'fpe', 'fpeMed', 'peg', 'pb', 'ps', 'evEbitda', 'fcfY', 'divY', 'sVal'],
-    'Bewertung', ['pe', 'fpe', 'fpeMed', 'peg', 'evEbitda', 'fcfY', 'divY', 'pb', 'ps']],
+    'Bewertung', ['fpe', 'peg', 'valB'], ['pe', 'fpeMed', 'evEbitda', 'fcfY', 'divY', 'pb', 'ps', 'sVal']],
   ['quality', 'Qualität & Wachstum', ['name', 'score', 'sec', 'roe', 'opm', 'npm', 'de', 'revG', 'epsG', 'epsGny', 'sQual', 'sGrow'],
-    'Qualität', ['roe', 'opm', 'de', 'revG', 'epsG', 'epsGny']],
+    'Qualität', ['roe', 'revG', 'epsGny'], ['opm', 'npm', 'de', 'epsG', 'sQual', 'sGrow']],
   ['analysts', 'Analysten & Momentum', ['name', 'score', 'cons', 'dist', 'nA', 'up', 'rev90', 'r52', 'rel52', 'ma200', 'hi52', 'beta', 'sAna', 'sMom'],
-    'Analysten', ['cons', 'nA', 'up', 'rev90', 'rel52', 'ma200']],
+    'Analysten', ['cons', 'up', 'rel52'], ['nA', 'dist', 'rev90', 'r52', 'ma200', 'hi52', 'beta', 'sMom']],
 ];
-// Extra sort options offered in the mobile sort menu (besides the view's fields).
-const MOBILE_SORT_EXTRA = ['score', 'mcap', 'name', 'd1'];
 
 function distMini(s) {
   if (!s.dist) return NA;
@@ -318,23 +379,58 @@ function distMini(s) {
 
 const PRESETS = [
   { id: '', label: 'Alle' },
-  { id: 'top', label: 'Top-Score', desc: 'Die am besten bewerteten Aktien nach StockRatio-Score',
-    test: (s) => isNum(s.score), sort: { key: 'score', dir: -1 } },
+  { id: 'fav', label: '★ Favoriten', desc: 'Deine mit ★ markierten Aktien und ETFs',
+    test: (s) => favs.has(s.s), sort: { key: 'score', dir: -1 } },
   { id: 'cheapStrong', label: 'Günstig & stark', desc: 'Score ≥ 70 und Bewertungs-Score ≥ 60',
     test: (s) => s.score >= 70 && s.sVal >= 60, sort: { key: 'score', dir: -1 } },
-  { id: 'garp', label: 'Wachstum zum fairen Preis', desc: 'PEG < 1, positives Forward-KGV, > 5 % erwartetes Gewinnwachstum, mind. 3 Analysten',
+  { id: 'garp', label: 'Wachstum fair bewertet', desc: 'PEG < 1, positives Forward-KGV, > 5 % erwartetes Gewinnwachstum, mind. 3 Analysten',
     test: (s) => s.peg > 0 && s.peg < 1 && s.fpe > 0 && s.epsGny > 0.05 && s.nA >= 3, sort: { key: 'peg', dir: 1 } },
-  { id: 'value', label: 'Value (KGV < 15)', desc: 'KGV und Forward-KGV unter 15, solide Qualität',
+  { id: 'value', label: 'Value', desc: 'KGV und Forward-KGV unter 15, solide Qualität',
     test: (s) => s.pe > 0 && s.pe < 15 && s.fpe > 0 && s.fpe < 15 && s.sQual >= 40, sort: { key: 'fpe', dir: 1 } },
   { id: 'analysts', label: 'Analysten-Lieblinge', desc: 'Konsens „Kaufen“ (≤ 1,8), mind. 10 Analysten, ≥ 15 % Kursziel-Potenzial',
     test: (s) => s.rec <= 1.8 && s.nA >= 10 && s.up >= 0.15, sort: { key: 'up', dir: -1 } },
-  { id: 'dividend', label: 'Dividenden-Qualität', desc: '≥ 3 % Dividende, Ausschüttungsquote ≤ 80 %, Qualitäts-Score ≥ 50',
+  { id: 'dividend', label: 'Dividende', desc: '≥ 3 % Dividende, Ausschüttungsquote ≤ 80 %, Qualitäts-Score ≥ 50',
     test: (s) => s.divY >= 0.03 && isNum(s.payout) && s.payout <= 0.8 && s.sQual >= 50, sort: { key: 'divY', dir: -1 } },
-  { id: 'expensive', label: 'Zu teuer – Vorsicht', desc: 'Die teuersten 15 % nach Bewertungs-Score',
+  { id: 'expensive', label: 'Vorsicht: teuer', desc: 'Die teuersten 15 % nach Bewertungs-Score',
     test: (s) => isNum(s.sVal) && s.sVal <= 15, sort: { key: 'sVal', dir: 1 } },
-  { id: 'fav', label: '★ Favoriten', desc: 'Deine mit ★ markierten Aktien und ETFs',
-    test: (s) => favs.has(s.s), sort: { key: 'score', dir: -1 } },
 ];
+
+// One sort menu with sensible directions instead of "field + direction".
+const SORTS = [
+  ['score', -1, 'Bester Score'],
+  ['mcap', -1, 'Größte Marktkap.'],
+  ['up', -1, 'Höchstes Kurspotenzial'],
+  ['fpe', 1, 'Günstigstes Fwd-KGV'],
+  ['peg', 1, 'Günstigstes PEG'],
+  ['cons', 1, 'Beste Analysten-Wertung'],
+  ['rel52', -1, 'Stärkste vs. S&P 500'],
+  ['d1', -1, 'Heute: Gewinner'],
+  ['d1', 1, 'Heute: Verlierer'],
+  ['divY', -1, 'Höchste Dividende'],
+  ['name', 1, 'Name A–Z'],
+];
+const sortId = (key, dir) => `${key}${dir === 1 ? '+' : '-'}`;
+
+// Human-readable text for active filters (shown as removable chips).
+const FILTER_TEXT = {
+  index: (v) => ({ SP500: 'S&P 500', MSCI: 'MSCI World', FAV: '★ Favoriten', ETF: 'Nur ETFs' }[v] || v),
+  region: (v) => (REGIONS.find((r) => r[0] === v) || [])[1] || countryDe(v),
+  sector: (v) => sectorDe(v),
+  label: (v) => (v === 'pos' ? 'Kaufkandidat + Positiv' : `Signal: ${v}`),
+  val: (v) => ({ cheap: 'Bewertung: günstig', notexp: 'Bewertung: nicht teuer', exp: 'Bewertung: teuer' }[v] || v),
+  ana: (v) => ({ buy: 'Analysten: mind. Kaufen', strong: 'Analysten: Starker Kauf', hold: 'Analysten: Halten oder schlechter' }[v] || v),
+  scoreMin: (v) => `Score ≥ ${v}`,
+  fpeMax: (v) => `Fwd-KGV ≤ ${v}`,
+  peMax: (v) => `KGV ≤ ${v}`,
+  pegMax: (v) => `PEG ≤ ${v}`,
+  upMin: (v) => `Potenzial ≥ ${v} %`,
+  divMin: (v) => `Dividende ≥ ${v} %`,
+  mcapMin: (v) => `Marktkap. ≥ ${v} Mrd. $`,
+  noLoss: () => 'Ohne Verlustbringer',
+  minAnalysts: () => 'Mind. 5 Analysten',
+};
+const LIMIT_KEYS = ['scoreMin', 'fpeMax', 'peMax', 'pegMax', 'upMin', 'divMin', 'mcapMin'];
+const activeFilterKeys = () => Object.keys(DEFAULT_FILTERS).filter((k) => state.f[k] !== DEFAULT_FILTERS[k] && state.f[k] !== '' && state.f[k] !== null);
 
 /* ---------------------------------------------------------------- filtering */
 
@@ -451,25 +547,42 @@ function renderBody() {
   renderPager(pages);
 }
 
+function scoreRing(s) {
+  if (isNum(s.score)) {
+    return `<div class="sc-score lv-${esc(s.label)}" title="StockRatio-Score ${NF[0].format(s.score)} von 100">
+      <span class="ring sm" style="--p:${s.score}"><b>${NF[0].format(s.score)}</b></span><span class="lbl">${esc(s.label)}</span></div>`;
+  }
+  return `<div class="sc-score">${s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : '<span class="na">kein Score</span>'}</div>`;
+}
+
 function renderCards() {
   $('#table tbody').innerHTML = '';
-  const fields = currentView()[4];
+  const view = currentView();
+  const [keyFields, moreFields] = [view[4], view[5]];
   const rows = filtered.slice(0, state.shown);
   $('#cards').innerHTML = rows.map((s) => {
     const iso = countryIso(s.cty);
-    const score = isNum(s.score)
-      ? `<span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span>`
-      : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : '<span class="na">kein Score</span>';
-    const stale = s.stale ? ' <span class="stale">⚠</span>' : '';
+    const stale = s.stale ? ' <span class="stale" title="Daten nicht aktuell">⚠</span>' : '';
+    const sub = s.type === 'ETF' ? 'ETF' : [iso, sectorDe(s.sec)].filter(Boolean).join(' · ');
+    const fav = favs.has(s.s);
     return `<article class="scard" data-sym="${esc(s.s)}" tabindex="0">
       <div class="sc-top">
-        <button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>
+        ${logoHtml(s, 'lg')}
         <div class="sc-name"><span class="nm">${esc(s.n)}</span>
-          <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : `${iso ? ' · ' + iso : ''} · ${esc(sectorDe(s.sec))}`}${stale}</span></div>
-        <div class="sc-score pill lv-${esc(s.label || 'Neutral')}">${score}</div>
+          <span class="tk"><b class="sym">${esc(s.s)}</b> · ${esc(sub)}${stale}</span></div>
+        ${scoreRing(s)}
       </div>
-      <div class="sc-px"><span class="p">${priceFmt(s)}</span>${pct(s.d1, 1, true, true)}<span class="m">${mcapFmt(s.mcap)}</span>${planBtn(s)}</div>
-      <div class="sc-grid">${fields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
+      <div class="sc-px">
+        <span class="p">${priceFmt(s)}</span>
+        <span class="chg">${pct(s.d1, 1, true, true)}</span>
+        <span class="m">${mcapFmt(s.mcap)}</span>
+        <span class="sc-act">
+          <button class="star ${fav ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="${fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}">★</button>
+          ${planBtn(s)}
+        </span>
+      </div>
+      <div class="sc-key">${keyFields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
+      <dl class="sc-more">${moreFields.map((k) => `<div><dt>${esc(COLUMNS[k].label)}</dt><dd>${COLUMNS[k].render(s)}</dd></div>`).join('')}</dl>
     </article>`;
   }).join('');
   const rest = filtered.length - rows.length;
@@ -481,12 +594,12 @@ function renderCards() {
 }
 
 function renderSortSelect() {
-  const keys = [...new Set([...MOBILE_SORT_EXTRA, ...currentView()[4], state.sort.key])].filter((k) => COLUMNS[k]);
-  const names = { name: 'Name', score: 'Score', mcap: 'Marktkap.', d1: 'Tagesänderung' };
-  $('#sortSel').innerHTML = keys.map((k) =>
-    `<option value="${k}" ${k === state.sort.key ? 'selected' : ''}>${esc(names[k] || COLUMNS[k].label)}</option>`).join('');
-  $('#sortDir').textContent = state.sort.dir === 1 ? '↑' : '↓';
-  $('#sortDir').title = state.sort.dir === 1 ? 'aufsteigend' : 'absteigend';
+  const cur = sortId(state.sort.key, state.sort.dir);
+  const opts = SORTS.map(([k, d, label]) => [sortId(k, d), label]);
+  if (!opts.some(([id]) => id === cur) && COLUMNS[state.sort.key]) {
+    opts.push([cur, `${COLUMNS[state.sort.key].label} ${state.sort.dir === 1 ? '↑' : '↓'}`]);
+  }
+  $('#sortSel').innerHTML = opts.map(([id, label]) => `<option value="${id}" ${id === cur ? 'selected' : ''}>${esc(label)}</option>`).join('');
 }
 
 function renderPager(pages) {
@@ -518,19 +631,29 @@ function renderViews() {
 }
 
 function syncFilterInputs() {
-  let active = 0;
   document.querySelectorAll('[data-f]').forEach((el) => {
-    const key = el.dataset.f;
-    const value = state.f[key];
+    const value = state.f[el.dataset.f];
     if (el.type === 'checkbox') el.checked = !!value;
-    else el.value = value ?? '';
-    const isActive = el.type === 'checkbox' ? !!value : value !== '' && value !== null;
-    el.classList.toggle('active-f', isActive && el.type !== 'checkbox');
-    if (isActive) active += 1;
+    else if (el.type === 'radio') el.checked = String(value ?? '') === el.value;
+    else {
+      el.value = value ?? '';
+      el.classList.toggle('active-f', value !== '' && value !== null && value !== undefined);
+    }
   });
+  const active = activeFilterKeys();
   const badge = $('#filterCount');
-  badge.hidden = active === 0;
-  badge.textContent = active;
+  badge.hidden = active.length === 0;
+  badge.textContent = active.length;
+  const limits = active.filter((k) => LIMIT_KEYS.includes(k)).length;
+  $('#fMoreCount').hidden = !limits;
+  $('#fMoreCount').textContent = limits;
+  if (limits) $('#fMore').open = true;
+
+  const box = $('#activeFilters');
+  box.hidden = active.length === 0;
+  box.innerHTML = active.map((k) =>
+    `<button class="afchip" data-clear="${k}" aria-label="Filter entfernen: ${esc(FILTER_TEXT[k](state.f[k]))}">${esc(FILTER_TEXT[k](state.f[k]))}<span aria-hidden="true">×</span></button>`).join('')
+    + (active.length > 1 ? '<button class="afclear" data-clear="*">Alle entfernen</button>' : '');
 }
 
 function update({ resetPage = true } = {}) {
@@ -569,6 +692,7 @@ function readHash() {
   state.mode = p.get('m') === 'pf' ? 'portfolio' : 'screener';
   const preset = p.get('p') === 'watch' ? 'fav' : p.get('p');
   state.preset = PRESETS.some((x) => x.id === preset) ? preset : '';
+  if (preset === 'top' && !p.get('s')) state.sort = { key: 'score', dir: -1 }; // old "Top-Score" links
   state.view = VIEWS.some((v) => v[0] === p.get('v')) ? p.get('v') : 'overview';
   const s = p.get('s');
   if (s && COLUMNS[s.slice(0, -1)]) state.sort = { key: s.slice(0, -1), dir: s.endsWith('+') ? 1 : -1 };
@@ -635,7 +759,8 @@ function openDetail(sym) {
 
   const bars = PILLARS.map(([key, label]) => {
     const v = s[key];
-    return `<div class="bar-row"><span>${label}</span><span class="bar"><i style="width:${isNum(v) ? v : 0}%"></i></span><b>${isNum(v) ? NF[0].format(v) : '–'}</b></div>`;
+    const col = !isNum(v) ? '' : v >= 70 ? 'var(--pos)' : v < 30 ? 'var(--neg)' : 'var(--accent)';
+    return `<div class="bar-row"><span>${label}</span><span class="bar"><i style="width:${isNum(v) ? v : 0}%${col ? ';background:' + col : ''}"></i></span><b>${isNum(v) ? NF[0].format(v) : '–'}</b></div>`;
   }).join('');
 
   const distLabels = ['Starker Kauf', 'Kaufen', 'Halten', 'Verkaufen', 'Starker Verkauf'];
@@ -670,7 +795,8 @@ function openDetail(sym) {
 
   $('#detailBody').innerHTML = `
     <div class="d-head">
-      <div>
+      ${logoHtml(s, 'xl')}
+      <div class="d-title">
         <h2 id="dTitle">${esc(s.n)}</h2>
         <div class="tk">${esc(s.s)}${s.ex ? ' · ' + esc(s.ex) : ''}${s.isin ? ' · ISIN ' + esc(s.isin) : ''}${iso ? ' · ' + iso : ''}</div>
       </div>
@@ -839,15 +965,22 @@ function bindEvents() {
     state.sort = { key: 'mcap', dir: -1 };
     update();
   };
-  $('#reset').addEventListener('click', resetAll);
   $('#resetSheet').addEventListener('click', resetAll);
 
-  $('#sortSel').addEventListener('change', (e) => {
-    const key = e.target.value;
-    state.sort = { key, dir: COLUMNS[key].dir || -1 };
+  $('#activeFilters').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-clear]');
+    if (!b) return;
+    if (b.dataset.clear === '*') state.f = { ...DEFAULT_FILTERS };
+    else state.f[b.dataset.clear] = DEFAULT_FILTERS[b.dataset.clear];
     update();
   });
-  $('#sortDir').addEventListener('click', () => { state.sort.dir *= -1; update(); });
+
+  $('#sortSel').addEventListener('change', (e) => {
+    const v = e.target.value;
+    const key = v.slice(0, -1);
+    if (COLUMNS[key]) state.sort = { key, dir: v.endsWith('+') ? 1 : -1 };
+    update();
+  });
 
   $('#more').addEventListener('click', () => { state.shown += CARD_STEP; renderCards(); });
 
@@ -1087,8 +1220,8 @@ function renderPortfolio() {
       ? `<span class="pill lv-${s.label}"><span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span></span>`
       : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : NA;
     return `<div class="pf-row" data-sym="${esc(s.s)}" tabindex="0">
-      <div class="pf-name"><span class="nm">${esc(s.n)}</span>
-        <span class="tk">${esc(s.s)} · ${fmtShares(p.shares)} Stk. · ${priceFmt(s)}</span></div>
+      <div class="pf-name">${logoHtml(s)}<div class="nm-wrap"><span class="nm">${esc(s.n)}</span>
+        <span class="tk">${esc(s.s)} · ${fmtShares(p.shares)} Stk. · ${priceFmt(s)}</span></div></div>
       <div class="pf-val"><b>${money(value)}</b><span>${pct(s.d1, 1, true, true)}${isNum(day) ? ` <span class="muted">(${day >= 0 ? '+' : ''}${money(day)})</span>` : ''}</span></div>
       <div class="pf-w"><span class="bar"><i style="width:${(w * 100).toFixed(1)}%"></i></span><span>${pct(w, 1)}</span></div>
       <div class="pf-score">${scoreHtml}</div>
@@ -1207,7 +1340,7 @@ function suggest(query) {
   const hits = STOCKS.map((s) => [scoreOf(s), s]).filter((x) => x[0] < 9)
     .sort((a, b) => a[0] - b[0] || (b[1].mcap || 0) - (a[1].mcap || 0)).slice(0, 8);
   box.innerHTML = hits.length
-    ? hits.map(([, s]) => `<li role="option" data-pick="${esc(s.s)}"><span><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''}</span></span><span class="tk">${priceFmt(s)}</span></li>`).join('')
+    ? hits.map(([, s]) => `<li role="option" data-pick="${esc(s.s)}"><span class="sg-name">${logoHtml(s, 'sm')}<span><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''}</span></span></span><span class="tk">${priceFmt(s)}</span></li>`).join('')
     : '<li class="muted">Nichts gefunden – nur Werte aus S&amp;P 500, MSCI World und watchlist.txt sind verfügbar.</li>';
   box.hidden = false;
 }
@@ -1555,7 +1688,7 @@ function planItemHtml(r, P) {
 
   return `<div class="pl-item st-${status}">
     <div class="pl-head">
-      <div class="pl-name" data-plan-open="${esc(s.s)}"><b>${esc(s.n)}</b><span class="tk">${esc(s.s)} ${scoreHtml}</span></div>
+      <div class="pl-name" data-plan-open="${esc(s.s)}">${logoHtml(s)}<div class="nm-wrap"><b>${esc(s.n)}</b><span class="tk">${esc(s.s)} ${scoreHtml}</span></div></div>
       <button class="icon-btn" data-plan-del="${esc(s.s)}" aria-label="Aus dem Kaufplan entfernen" title="Entfernen">✕</button>
     </div>
     ${alloc}
@@ -1990,6 +2123,13 @@ async function renderSettings() {
 
   body.innerHTML = `
     <section class="set-sec">
+      <h3>🎨 Darstellung</h3>
+      <div class="theme-list" role="radiogroup" aria-label="Farbschema">${themeOptionsHtml()}</div>
+      <label class="sw"><input type="checkbox" data-logos ${logosOn() ? 'checked' : ''}><span class="sw-ui"></span>
+        <span class="sw-txt"><b>Firmenlogos anzeigen</b><small>Logos werden von financialmodelingprep.com geladen (ersatzweise das Website-Symbol). Aus = Initialen.</small></span></label>
+    </section>
+
+    <section class="set-sec">
       <h3>🔔 Benachrichtigungen</h3>
       ${!supported ? '<p class="set-warn">Dieser Browser unterstützt keine Push-Benachrichtigungen. Auf Android funktioniert es mit Chrome.</p>' : ''}
       <div class="set-status">
@@ -2076,6 +2216,30 @@ function openSettings() {
   }
 }
 
+function bindTheme() {
+  applyTheme(theme);
+  DARK_MQ.addEventListener('change', () => applyTheme());
+  const btn = $('#themeOpen'), menu = $('#themeMenu');
+  const close = () => { menu.hidden = true; btn.setAttribute('aria-expanded', 'false'); };
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!menu.hidden) { close(); return; }
+    menu.innerHTML = themeOptionsHtml();
+    menu.hidden = false;
+    btn.setAttribute('aria-expanded', 'true');
+    menu.querySelector('[aria-checked="true"]')?.focus();
+  });
+  menu.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-theme-pick]');
+    if (!b) return;
+    setTheme(b.dataset.themePick);
+    close();
+    btn.focus();
+  });
+  document.addEventListener('click', (e) => { if (!menu.hidden && !e.target.closest('.theme-wrap')) close(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !menu.hidden) { close(); btn.focus(); } });
+}
+
 function bindSettings() {
   $('#settingsOpen').addEventListener('click', openSettings);
   const dlg = $('#settings');
@@ -2095,6 +2259,8 @@ function bindSettings() {
       setTimeout(() => applyLink(link.getAttribute('href') || ''), 120); // after the dialog's history entry is gone
       return;
     }
+    const tp = e.target.closest('[data-theme-pick]');
+    if (tp) { setTheme(tp.dataset.themePick); return; }
     const act = e.target.closest('[data-set-act]');
     if (!act) return;
     const a = act.dataset.setAct;
@@ -2116,6 +2282,14 @@ function bindSettings() {
     }
   });
   dlg.addEventListener('change', async (e) => {
+    const lg = e.target.closest('[data-logos]');
+    if (lg) {
+      SETTINGS.logos = lg.checked;
+      store.set(SETTINGS_KEY, SETTINGS);
+      update({ resetPage: false });
+      if (state.mode === 'portfolio') renderPortfolio();
+      return;
+    }
     const t = e.target.closest('[data-nset]');
     if (!t) return;
     const key = t.dataset.nset;
@@ -2159,6 +2333,7 @@ function renderMeta() {
   $('#meta').innerHTML = `<span class="meta-long">Datenstand <b>${esc(when)}</b> · ${STOCKS.length.toLocaleString('de-DE')} Aktien<span class="meta-src"> · Quelle: ${esc(DATA.source)}</span><br>
     S&amp;P 500 (52 W): <b>${pct(DATA.sp500_52w, 1, true, true)}</b> · <a href="#erklaerung" style="color:inherit">Erklärungen</a></span>
     <span class="meta-short">Stand <b>${esc(short)}</b><br>S&amp;P 500 52 W <b>${pct(DATA.sp500_52w, 1, true, true)}</b></span>`;
+  $('#metaMob').innerHTML = `${esc(short.replace(',', ''))} · S&amp;P 500 1 J. <b>${pct(DATA.sp500_52w, 1, true, true)}</b>`;
   const w = DATA.weights || {};
   const names = { val: 'Bewertung (Forward-KGV, PEG, KGV, EV/EBITDA, FCF-Rendite – relativ zur Branche)', qual: 'Qualität (ROE, Margen, Verschuldung)', grow: 'Wachstum (Umsatz, Gewinn, erwartetes EPS-Wachstum)', ana: 'Analysten (Konsens, Kursziel-Potenzial, Gewinnrevisionen)', mom: 'Momentum (Performance vs. S&P 500, 200-Tage-Linie)' };
   $('#weightsList').innerHTML = Object.entries(w).map(([k, v]) => `<li><b>${NF[0].format(v * 100)} %</b> ${names[k] || k}</li>`).join('');
@@ -2173,12 +2348,13 @@ async function init() {
   bindPlan();
   bindLevels();
   bindSettings();
+  bindTheme();
   registerServiceWorker();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');
   }
-  if (!isMobile()) $('#q').placeholder = 'Name, Ticker oder ISIN suchen …  (Taste /)';
+  $('#q').placeholder = isMobile() ? 'Name, Ticker, ISIN …' : 'Name, Ticker oder ISIN suchen …  (Taste /)';
   $('#q').value = state.q;
   try {
     const res = await fetch(DATA_URL, { cache: 'no-cache' });
@@ -2186,6 +2362,7 @@ async function init() {
     DATA = await res.json();
   } catch (err) {
     $('#meta').textContent = 'Daten konnten nicht geladen werden.';
+    $('#metaMob').textContent = 'Daten konnten nicht geladen werden.';
     $('#empty').hidden = false;
     $('#empty').textContent = `Fehler beim Laden von ${DATA_URL} (${err.message}). Wurde der Daten-Workflow schon einmal ausgeführt?`;
     return;

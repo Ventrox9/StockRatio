@@ -17,7 +17,8 @@ aktualisiert und auf **GitHub Pages** veröffentlicht. Es gibt keinen Server und
 | **Analysten** | Konsens (Starker Kauf … Verkaufen), Anteil Kaufempfehlungen, Verteilung, Kursziel und Potenzial, Gewinnrevisionen der letzten 90 Tage |
 | **Momentum** | 52-Wochen-Performance, **Performance vs. S&P 500**, Abstand zur 200-Tage-Linie und zum 52-W-Hoch, Beta |
 | **Score** | Gewichtete Kombination aus Bewertung (30 %), Analysten (25 %), Qualität (20 %), Wachstum (15 %), Momentum (10 %) |
-| **Bedienung** | Suche, Schnellfilter („Günstig & stark“, „Wachstum zum fairen Preis“, „Value“, „Analysten-Lieblinge“, „Dividenden“, „Zu teuer – Vorsicht“), Detailfilter (Index, Land/Region, Sektor, KGV-/PEG-Grenzen …), sortierbare Spalten, vier Ansichten, Detailansicht mit Begründung, Favoriten ★, CSV-Export, teilbare Links (Filter stehen in der URL), Handy-tauglich, Dark Mode |
+| **Bedienung** | Suche, Schnellfilter („Günstig & stark“, „Wachstum fair bewertet“, „Value“, „Analysten-Lieblinge“, „Dividende“, „Vorsicht: teuer“), Filter als Tipp-Chips (Signal, Bewertung, Analysten, Index) plus Land/Region, Sektor und Kennzahlen-Grenzen, aktive Filter als entfernbare Chips, ein Sortiermenü („Bester Score“, „Höchstes Kurspotenzial“ …), vier Ansichten, Detailansicht mit Begründung, Favoriten ★, CSV-Export, teilbare Links (Filter stehen in der URL), Handy-tauglich |
+| **Darstellung** | Drei Farbschemata – **Dunkel**, **Hell**, **Beige** – oder automatisch nach Gerät (Knopf ◐ oben rechts oder Einstellungen). **Firmenlogos** von financialmodelingprep.com (ersatzweise das Website-Symbol, sonst Initialen); abschaltbar in den Einstellungen |
 
 ### So funktioniert der Score
 
