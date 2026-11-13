@@ -1,0 +1,74 @@
+name: Daten aktualisieren & Seite veröffentlichen
+
+on:
+  schedule:
+    # Mo–Fr 22:17 UTC – nach US-Börsenschluss (Europa/Asien sind dann ebenfalls geschlossen)
+    - cron: "17 22 * * 1-5"
+  workflow_dispatch: # manuell starten: Actions -> dieser Workflow -> "Run workflow"
+  push:
+    paths:
+      - "site/**"
+      - "stockratio/**"
+      - "data/**"
+      - "watchlist.txt"
+      - "requirements.txt"
+      - ".github/workflows/update.yml"
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # GitHub Pages veröffentlicht nur vom Standard-Branch
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: Tests
+        run: |
+          pip install pytest
+          python -m pytest -q
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Aktienliste aktualisieren (S&P 500, MSCI World, Watchlist)
+        # Fällt eine Quelle aus, bleibt die Liste aus data/universe.csv erhalten.
+        continue-on-error: true
+        run: python -m stockratio.universe
+
+      - name: Kennzahlen von Yahoo Finance laden & Score berechnen
+        env:
+          # Aktien, die heute nicht geladen werden können, kommen aus dem letzten Stand.
+          PREVIOUS_DATA: ${{ steps.pages.outputs.base_url }}/data/stocks.json
+        run: python -m stockratio.build --workers 6
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
