@@ -235,6 +235,7 @@
               <option value="equal">Gleichmäßig</option>
             </select></label>
         </div>
+        <div class="plan-broker" id="planBroker"></div>
         <div class="plan-freeze" id="planFreeze"></div>
         <div class="plan-summary" id="planSummary"></div>
         <div class="plan-list" id="planList"></div>
@@ -247,7 +248,9 @@
             <li><b>Grenzen:</b> höchstens 40 % je Position (bei 2–3 Positionen 70 % bzw. 50 %), mindestens 5 %.</li>
             <li><b>Stop Loss:</b> 8 % × Beta, begrenzt auf 6–20 % unter dem aktuellen Kurs (ETFs ohne Beta: 7 %).</li>
             <li><b>Take Profit:</b> Analysten-Kursziel, sofern es mindestens 1,5× so weit entfernt ist wie der Stop Loss (max. +80 %);
-              sonst 2,5× der Stop-Abstand (Chance/Risiko 2,5 : 1).</li>
+              sonst 2,5× der Stop-Abstand (Chance/Risiko 2,5 : 1).
+              Mit Broker-Grenze <b>Revolut</b> höchstens <b>+45 %</b>: Revolut lehnt Verkaufs-Limits über 150 % des aktuellen Kurses ab,
+              5 % Puffer fangen Kursbewegungen bis zur Order ab.</li>
             <li><b>❄ Einfrieren:</b> Sobald du eine Position als gekauft oder ausgelassen markierst, wird die Aufteilung automatisch eingefroren.
               Ausgelassenes Geld bleibt dann einfach uninvestiert, die anderen Beträge ändern sich nicht.</li>
           </ul>

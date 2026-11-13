@@ -168,6 +168,20 @@ const LV_KEY = 'stockratio.pf.levels.v1';
 const LEVELS = Object.assign({ items: {} }, store.get(LV_KEY, {}));
 if (!LEVELS.items || typeof LEVELS.items !== 'object') LEVELS.items = {};
 const saveLevels = () => store.set(LV_KEY, LEVELS);
+
+// Broker limits for take-profit orders. Revolut rejects sell limits above 150 % of the current price;
+// we stay at +45 % because our prices are end-of-day and can move before the order is placed.
+const BROKERS = {
+  revolut: { label: 'Revolut (TP max. +45 %)', hard: 0.5, cap: 0.45, name: 'Revolut' },
+  none: { label: 'Ohne Broker-Grenze', hard: null, cap: null, name: '' },
+};
+const SETTINGS_KEY = 'stockratio.settings.v1';
+const SETTINGS = Object.assign({ broker: 'revolut' }, store.get(SETTINGS_KEY, {}));
+if (!BROKERS[SETTINGS.broker]) SETTINGS.broker = 'revolut';
+const broker = () => BROKERS[SETTINGS.broker];
+const brokerSelect = () => `<label class="broker-sel"><span>Broker-Grenze</span><select data-broker>
+  ${Object.entries(BROKERS).map(([k, b]) => `<option value="${k}" ${SETTINGS.broker === k ? 'selected' : ''}>${b.label}</option>`).join('')}
+</select></label>`;
 const inPlan = (sym) => PLAN.items.some((i) => i.s === sym);
 const planBtn = (s, long = false) => {
   const on = inPlan(s.s);
@@ -1351,6 +1365,11 @@ function tpsl(s) {
   } else {
     tp = s.px * (1 + 2.5 * slPct); src = 'Chance/Risiko 2,5 : 1';
   }
+  const b = broker();
+  if (b.cap !== null && tp > s.px * (1 + b.cap)) {
+    tp = s.px * (1 + b.cap);
+    src = `${src} – gekappt auf ${b.name}-Grenze`;
+  }
   return { sl, slPct, tp, tpPct: tp / s.px - 1, src, crv: (tp - s.px) / (s.px - sl), slSrc: hasBeta ? `Beta ${NF[2].format(s.beta)}` : 'Standard' };
 }
 
@@ -1440,6 +1459,7 @@ function renderPlan() {
   budgetIn.disabled = PLAN.frozen;
   $('#planMode').value = PLAN.mode;
   $('#planMode').disabled = PLAN.frozen;
+  $('#planBroker').innerHTML = brokerSelect();
   $('#planTitle').textContent = `Kaufplan${PLAN.items.length ? ` (${PLAN.items.length})` : ''}`;
 
   $('#planFreeze').innerHTML = PLAN.items.length
@@ -1677,15 +1697,21 @@ function levelInfo(p, s) {
   if (!L || !s || !isNum(s.px) || L.cur !== s.cur) return null;
   const perUnit = priceIn(s);               // price in portfolio currency
   const fx = perUnit !== null ? perUnit / s.px : null;
+  const b = broker();
+  // a stored target above the broker's limit (e.g. Revolut: 150 % of today's price) can't be placed – use the allowed maximum
+  const capped = b.hard !== null && L.tp > s.px * (1 + b.hard);
+  const tp = capped ? s.px * (1 + b.cap) : L.tp;
   return {
     L,
-    tpPct: L.tp / s.px - 1,
+    tp,
+    capped,
+    tpPct: tp / s.px - 1,
     slPct: L.sl / s.px - 1,
-    gain: fx !== null ? p.shares * (L.tp - s.px) * fx : null,
+    gain: fx !== null ? p.shares * (tp - s.px) * fx : null,
     loss: fx !== null ? p.shares * (L.sl - s.px) * fx : null,
-    hitTp: s.px >= L.tp,
+    hitTp: s.px >= tp,
     hitSl: s.px <= L.sl,
-    crv: s.px > L.sl ? (L.tp - s.px) / (s.px - L.sl) : null,
+    crv: s.px > L.sl ? (tp - s.px) / (s.px - L.sl) : null,
   };
 }
 
@@ -1699,7 +1725,7 @@ function levelsSummaryHtml(rows) {
     return `<div class="lv-bar empty">
       <div><b>Take Profit &amp; Stop Loss</b><p class="muted">Berechnet für jede Position ein Kursziel zum Gewinnmitnehmen und eine Verlustgrenze –
         ausgehend vom aktuellen Kurs. Die Werte werden gespeichert und bleiben fest, bis du sie neu generierst.</p></div>
-      <button class="btn primary" data-lv-act="generate">🎯 TP &amp; SL generieren</button>
+      <div class="lv-gen">${brokerSelect()}<button class="btn primary" data-lv-act="generate">🎯 TP &amp; SL generieren</button></div>
     </div>`;
   }
   const gain = withLv.reduce((a, x) => a + (x.info.gain || 0), 0);
@@ -1716,7 +1742,9 @@ function levelsSummaryHtml(rows) {
     </div>
     ${hits ? `<p class="lv-alert">⚠ Bei ${hits} ${hits === 1 ? 'Position ist' : 'Positionen ist'} ein Ziel erreicht – siehe unten.</p>` : ''}
     ${missing ? `<p class="muted lv-note">${missing} ${missing === 1 ? 'Position hat' : 'Positionen haben'} noch keine Werte – „Neu generieren“ ergänzt sie.</p>` : ''}
+    ${withLv.some((x) => x.info.capped) ? `<p class="lv-alert">⚠ ${withLv.filter((x) => x.info.capped).length} gespeicherte Take Profit(s) lagen über der ${esc(broker().name)}-Grenze und wurden angepasst – „Alle neu generieren“ speichert die erlaubten Werte.</p>` : ''}
     <div class="lv-actions">
+      ${brokerSelect()}
       <button class="btn" data-lv-act="generate">↻ Alle neu generieren</button>
       <button class="btn ghost" data-lv-act="copy">Liste kopieren</button>
       <button class="btn ghost" data-lv-act="clear">Entfernen</button>
@@ -1735,7 +1763,7 @@ function levelRowHtml(p, s) {
       ? '<span class="lv-st hit-sl">⚠ Stop Loss erreicht</span>'
       : `<span class="lv-st">CRV ${isNum(info.crv) ? NF[1].format(info.crv) + ' : 1' : '–'}</span>`;
   return `<div class="pf-lv">
-    <div class="lv-tp" title="${esc(L.src || '')}"><small>Take Profit</small><b>${pxD(L.tp)}</b>
+    <div class="lv-tp" title="${esc(L.src || '')}"><small>Take Profit${info.capped ? ` <span class="lv-cap" title="Gespeichert: ${pxD(L.tp)} – über der ${esc(broker().name)}-Grenze von 150 % des Kurses">angepasst</span>` : ''}</small><b>${pxD(info.tp)}</b>
       <span class="${info.tpPct >= 0 ? 'up' : 'down'}">${pct(info.tpPct, 1, true)} · ${signedMoney(info.gain)}</span></div>
     <div class="lv-sl" title="${esc(L.slSrc || '')}"><small>Stop Loss</small><b>${pxD(L.sl)}</b>
       <span class="down">${pct(info.slPct, 1, true)} · ${signedMoney(info.loss)}</span></div>
@@ -1749,7 +1777,8 @@ function copyLevels() {
     const s = BYSYM[p.s], L = LEVELS.items[p.s];
     if (!s || !L) return null;
     const f = (v) => `${NF[v >= 1000 ? 0 : 2].format(v)} ${s.cur}`;
-    return `${s.n} (${s.s}): Take Profit ${f(L.tp)} · Stop Loss ${f(L.sl)}`;
+    const info = levelInfo(p, s);
+    return `${s.n} (${s.s}): Take Profit ${f(info ? info.tp : L.tp)} · Stop Loss ${f(L.sl)}`;
   }).filter(Boolean);
   const text = lines.join('\n');
   const done = () => toast('TP/SL-Liste kopiert');
@@ -1758,6 +1787,16 @@ function copyLevels() {
 }
 
 function bindLevels() {
+  document.addEventListener('change', (e) => {
+    const sel = e.target.closest('[data-broker]');
+    if (!sel) return;
+    SETTINGS.broker = BROKERS[sel.value] ? sel.value : 'revolut';
+    store.set(SETTINGS_KEY, SETTINGS);
+    if (state.mode === 'portfolio') renderPortfolio();
+    if ($('#plan').open) renderPlan();
+    toast(SETTINGS.broker === 'revolut' ? 'Take Profit max. +45 % (Revolut-Grenze)' : 'Ohne Broker-Grenze');
+  });
+
   // capture phase so the buttons inside a portfolio row don't open the detail view
   document.addEventListener('click', (e) => {
     const act = e.target.closest('[data-lv-act]');

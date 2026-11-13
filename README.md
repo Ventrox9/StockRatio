@@ -67,6 +67,10 @@ wie im Kaufplan, ausgehend vom aktuellen Kurs). Die Werte werden **festgehalten*
 Hinweis, sobald ein Ziel erreicht ist. „Liste kopieren“ liefert alle Werte als Text, z. B. zum Eintragen beim Broker.
 Käufe aus dem Kaufplan übernehmen automatisch dessen TP/SL. Gespeichert getrennt vom Portfolio.
 
+**Broker-Grenze:** Standard ist **Revolut** – Take Profits liegen dann höchstens **+45 %** über dem Kurs
+(Revolut lehnt Verkaufs-Limits über 150 % des aktuellen Kurses ab; 5 % Puffer für Kursbewegungen bis zur Order).
+Ältere, zu hohe Werte werden markiert und auf den erlaubten Wert angepasst. Umschaltbar auf „Ohne Broker-Grenze“.
+
 ## Kaufplan (+)
 
 - Mit **+** an jeder Aktie (Tabelle, Karte, Detailansicht) landet sie im **Kaufplan** (Knopf oben rechts).
