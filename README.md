@@ -1,5 +1,10 @@
 # StockRatio – Aktien-Screener
 
+### 👉 [**StockRatio öffnen**](https://ventrox9.github.io/StockRatio/)
+
+> Das Tool läuft unter **https://ventrox9.github.io/StockRatio/** – diese Seite hier ist nur die Beschreibung.
+> Tipp: Im Handy-Browser über *⋮ → „Zum Startbildschirm hinzufügen“* als App speichern, dann landest du immer direkt im Tool.
+
 Webseite zum Sortieren und Filtern von rund **1.300 Aktien** (S&P 500, MSCI World und eigene Watchlist)
 nach **KGV, Forward-KGV, PEG** und weiteren Kennzahlen – mit Analysten-Konsens, Kursziel-Potenzial,
 Performance gegenüber dem S&P 500 und einem eigenen **StockRatio-Score** (0–100) samt Signal
