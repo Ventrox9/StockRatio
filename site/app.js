@@ -878,6 +878,8 @@ function openDetail(sym) {
     <div class="links">
       <a href="https://finance.yahoo.com/quote/${encodeURIComponent(s.s)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>
       ${s.web && /^https?:\/\//.test(s.web) ? `<a href="${esc(s.web)}" target="_blank" rel="noopener">Unternehmens-Website ↗</a>` : ''}
+      ${!isEtf && !s.s.includes('.') ? `<a href="https://www.revolut.com/stocks/${encodeURIComponent(s.s.toLowerCase())}/" target="_blank" rel="noopener">Bei Revolut ↗</a>` : ''}
+      <a href="revolut-test.html?s=${encodeURIComponent(s.s)}" title="Testet, welche Links die Revolut-App direkt mit dieser Aktie öffnen">Revolut-Link-Test</a>
       <button class="btn ghost" data-fav="${esc(s.s)}">${favs.has(s.s) ? '★ Aus Favoriten entfernen' : '☆ Zu Favoriten'}</button>
       <button class="btn ghost" data-pf="${esc(s.s)}">${held ? '✎ Portfolio-Position bearbeiten' : '+ Zum Portfolio'}</button>
       ${planBtn(s, true)}

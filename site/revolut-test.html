@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Revolut-Link-Test</title>
+  <meta name="robots" content="noindex">
+  <link rel="stylesheet" href="style.css?v=__VERSION__">
+  <script>
+    try { var t = JSON.parse(localStorage.getItem('stockratio.theme') || 'null'); if (t && t !== 'auto') document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <style>
+    .rt { max-width: 640px; margin: 0 auto; padding: 20px 16px 40px; }
+    .rt h1 { font-size: 20px; margin: 0 0 4px; }
+    .rt > p { color: var(--muted); margin: 6px 0 16px; }
+    .rt-sym { display: flex; gap: 8px; margin-bottom: 16px; }
+    .rt-sym .btn { height: 44px; flex: none; }
+    .rt-sym input { flex: 1; min-width: 0; height: 44px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); color: var(--text); padding: 0 12px; font-size: 16px; }
+    .rt-list { display: grid; gap: 10px; padding: 0; margin: 0; list-style: none; counter-reset: rt; }
+    .rt-list li { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; counter-increment: rt; }
+    .rt-list b::before { content: counter(rt) ". "; color: var(--accent); }
+    .rt-list code { display: block; font-size: 12px; color: var(--muted); word-break: break-all; margin: 4px 0 10px; }
+    .rt-list small { display: block; color: var(--muted); margin-bottom: 10px; }
+    .rt-list a.btn { text-decoration: none; color: var(--on-accent); width: 100%; justify-content: center; height: 44px; }
+    .rt-note { margin-top: 18px; font-size: 13px; color: var(--muted); background: var(--warn-soft); border-radius: 12px; padding: 12px 14px; }
+  </style>
+</head>
+<body>
+  <main class="rt">
+    <h1>Revolut-Link-Test</h1>
+    <p>Tippe auf dem Handy (Revolut-App installiert) nacheinander auf die Varianten und merke dir, was passiert:
+      <b>öffnet die App mit der Aktie</b>, <b>nur die App</b>, <b>Webseite</b> oder <b>nichts</b>.</p>
+    <label class="rt-sym"><input id="sym" value="AAPL" autocomplete="off" aria-label="Ticker"><button class="btn" id="go">Übernehmen</button></label>
+    <ol class="rt-list" id="list"></ol>
+    <p class="rt-note">Revolut veröffentlicht kein offizielles Linkformat für einzelne Aktien in der App. Bestätigt ist nur:
+      Links unter <code style="display:inline">revolut.com/app/…</code> sind laut Revolut für die App registriert, und die öffentliche
+      Aktienseite <code style="display:inline">revolut.com/stocks/&lt;ticker&gt;/</code> existiert. Alles Weitere zeigt dieser Test.</p>
+    <p><a href="./" style="color:var(--accent)">← zurück zu StockRatio</a></p>
+  </main>
+  <script>
+    'use strict';
+    const VARIANTS = [
+      ['Öffentliche Aktienseite (Web)', (t) => `https://www.revolut.com/stocks/${t.toLowerCase()}/`,
+        'Sicher vorhanden. Öffnet meist den Browser mit „In der App öffnen“.'],
+      ['App-Link: /app/stocks', (t) => `https://revolut.com/app/stocks/${t}`,
+        '/app/… ist für die App registriert – öffnet die App; ob sie zur Aktie springt, ist offen.'],
+      ['App-Link: /app/invest/stocks', (t) => `https://revolut.com/app/invest/stocks/${t}`, 'Variante mit „invest“.'],
+      ['App-Link: /app/stocks/details', (t) => `https://revolut.com/app/stocks/details/${t}`, 'Variante mit „details“.'],
+      ['App-Schema: revolut://stocks', (t) => `revolut://stocks/${t}`, 'Eigenes URL-Schema der App (nicht dokumentiert).'],
+      ['App-Schema: revolut://invest', (t) => `revolut://invest/stocks/${t}`, 'Variante mit „invest“.'],
+      ['Android: App starten (Intent)', () => 'intent://#Intent;package=com.revolut.revolut;end',
+        'Nur Android/Chrome: öffnet Revolut sicher, aber auf der Startseite.'],
+    ];
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    function render() {
+      const t = document.getElementById('sym').value.trim().toUpperCase().replace(/\..*$/, '') || 'AAPL';
+      document.getElementById('list').innerHTML = VARIANTS.map(([title, url, note]) => {
+        const u = url(t);
+        return `<li><b>${esc(title)}</b><code>${esc(u)}</code><small>${esc(note)}</small><a class="btn primary" href="${esc(u)}">Testen</a></li>`;
+      }).join('');
+    }
+    const q = new URLSearchParams(location.search).get('s');
+    if (q) document.getElementById('sym').value = q;
+    document.getElementById('go').addEventListener('click', render);
+    document.getElementById('sym').addEventListener('keydown', (e) => { if (e.key === 'Enter') render(); });
+    render();
+  </script>
+</body>
+</html>
