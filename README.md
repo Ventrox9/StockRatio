@@ -59,6 +59,17 @@ Ticker-Endungen: `.DE` Xetra · `.L` London · `.PA` Paris · `.AS` Amsterdam ·
 `.MI` Mailand · `.MC` Madrid · `.CO` Kopenhagen · `.ST` Stockholm · `.T` Tokio · `.HK` Hongkong ·
 `.TO` Toronto · US-Aktien ohne Endung.
 
+## Kaufplan (+)
+
+- Mit **+** an jeder Aktie (Tabelle, Karte, Detailansicht) landet sie im **Kaufplan** (Knopf oben rechts).
+- Betrag in € eingeben → automatische Aufteilung: **Intelligent** (Gewicht ∝ Score², hohe Schwankung −max. 10 %,
+  max. 40 % / min. 5 % je Position) oder **gleichmäßig**.
+- Je Position **Take Profit** (Analysten-Kursziel, sonst Chance/Risiko 2,5 : 1), **Stop Loss** (8 % × Beta, 6–20 %)
+  und Chance/Risiko-Verhältnis.
+- **Gekauft / Auslassen** markieren. Beim ersten Markieren wird die Aufteilung **eingefroren** (❄) – ausgelassenes
+  Geld bleibt uninvestiert, die übrigen Beträge verschieben sich nicht. „Auftauen“ verteilt den Rest neu.
+- **OK** überträgt die gekauften Positionen ins Portfolio (bestehende Positionen werden ergänzt, nie überschrieben).
+
 ## Lokal ausführen
 
 ```bash

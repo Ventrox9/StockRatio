@@ -156,6 +156,19 @@ const favsSeeded = Array.isArray(storedFavs);
 const PF_KEY = 'stockratio.portfolio.v1';
 const PF = Object.assign({ cur: 'EUR', positions: [] }, store.get(PF_KEY, {}));
 const savePF = () => store.set(PF_KEY, PF);
+
+// Kaufplan (temporary buy list): items [{ s, status: open|bought|skipped, amt?: frozen EUR, inv?: invested EUR }]
+const PLAN_KEY = 'stockratio.plan.v1';
+const PLAN = Object.assign({ budget: null, mode: 'smart', frozen: false, items: [] }, store.get(PLAN_KEY, {}));
+if (!Array.isArray(PLAN.items)) PLAN.items = [];
+const savePlan = () => store.set(PLAN_KEY, PLAN);
+const inPlan = (sym) => PLAN.items.some((i) => i.s === sym);
+const planBtn = (s, long = false) => {
+  const on = inPlan(s.s);
+  return `<button class="${long ? 'btn ghost plan-add-long' : 'plus'} ${on ? 'on' : ''}" data-plan="${esc(s.s)}" ${long ? 'data-long="1"' : ''}
+    aria-label="${on ? 'Aus dem Kaufplan entfernen' : 'Zum Kaufplan hinzufügen'}" title="${on ? 'Im Kaufplan' : 'Zum Kaufplan'}">${planBtnLabel(on, long)}</button>`;
+};
+const planBtnLabel = (on, long) => (long ? (on ? '✓ Im Kaufplan' : '+ Zum Kaufplan') : (on ? '✓' : '+'));
 let BYSYM = {};
 
 /* ---------------------------------------------------------------- columns */
@@ -188,7 +201,7 @@ const COLUMNS = {
     render: (s) => {
       const iso = countryIso(s.cty);
       const stale = s.stale ? `<span class="stale" title="Konnte heute nicht aktualisiert werden – Daten vom ${esc(s.stale)}">⚠</span>` : '';
-      return `<div class="name-cell"><button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>
+      return `<div class="name-cell"><button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>${planBtn(s)}
         <div><span class="nm" title="${esc(s.n)}">${esc(s.n)}</span>
         <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : iso ? ' · ' + iso : ''}${stale}</span></div></div>`;
     },
@@ -431,7 +444,7 @@ function renderCards() {
           <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : `${iso ? ' · ' + iso : ''} · ${esc(sectorDe(s.sec))}`}${stale}</span></div>
         <div class="sc-score pill lv-${esc(s.label || 'Neutral')}">${score}</div>
       </div>
-      <div class="sc-px"><span class="p">${priceFmt(s)}</span>${pct(s.d1, 1, true, true)}<span class="m">${mcapFmt(s.mcap)}</span></div>
+      <div class="sc-px"><span class="p">${priceFmt(s)}</span>${pct(s.d1, 1, true, true)}<span class="m">${mcapFmt(s.mcap)}</span>${planBtn(s)}</div>
       <div class="sc-grid">${fields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
     </article>`;
   }).join('');
@@ -717,6 +730,7 @@ function openDetail(sym) {
       ${s.web && /^https?:\/\//.test(s.web) ? `<a href="${esc(s.web)}" target="_blank" rel="noopener">Unternehmens-Website ↗</a>` : ''}
       <button class="btn ghost" data-fav="${esc(s.s)}">${favs.has(s.s) ? '★ Aus Favoriten entfernen' : '☆ Zu Favoriten'}</button>
       <button class="btn ghost" data-pf="${esc(s.s)}">${held ? '✎ Portfolio-Position bearbeiten' : '+ Zum Portfolio'}</button>
+      ${planBtn(s, true)}
     </div>`;
   const dlg = $('#detail');
   if (!dlg.open) {
@@ -1271,6 +1285,370 @@ function toast(msg) {
   toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
+/* ---------------------------------------------------------------- Kaufplan */
+
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+const round2 = (v) => Math.round(v * 100) / 100;
+const eur = (v, d = 2) => (isNum(v)
+  ? new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', minimumFractionDigits: d, maximumFractionDigits: d }).format(v)
+  : '–');
+
+// Attractiveness used for the smart split (0–100)
+function attractiveness(s) {
+  if (isNum(s.score)) return s.score;
+  return s.type === 'ETF' ? 60 : 40;
+}
+
+// Weights with caps: max 40 % (70 % / 50 % for 2 / 3 positions), min 5 %
+function planWeights(stocks, mode) {
+  const n = stocks.length;
+  if (!n) return [];
+  const raw = stocks.map((s) => {
+    if (mode === 'equal') return 1;
+    // score dominates (squared); high volatility trims the weight by at most 10 %
+    const a = Math.max(attractiveness(s), 5) / 100;
+    const beta = isNum(s.beta) ? clamp(s.beta, 0.8, 2.0) : 1;
+    return a * a * (1 - 0.1 * (beta - 1));
+  });
+  if (mode === 'equal' || n === 1) return raw.map((x) => x / raw.reduce((a, b) => a + b, 0));
+  const maxW = n === 2 ? 0.7 : n === 3 ? 0.5 : 0.4;
+  const minW = Math.min(0.05, 0.5 / n);
+  const fixed = new Array(n).fill(null);
+  let w = [];
+  for (let iter = 0; iter < 25; iter += 1) {
+    const fixedTotal = fixed.reduce((a, f) => a + (f ?? 0), 0);
+    const freeRaw = raw.reduce((a, x, i) => a + (fixed[i] === null ? x : 0), 0);
+    w = raw.map((x, i) => fixed[i] ?? (freeRaw ? (x / freeRaw) * (1 - fixedTotal) : 0));
+    let changed = false;
+    w.forEach((x, i) => {
+      if (fixed[i] !== null) return;
+      if (x > maxW + 1e-9) { fixed[i] = maxW; changed = true; } else if (x < minW - 1e-9) { fixed[i] = minW; changed = true; }
+    });
+    if (!changed) break;
+  }
+  return w;
+}
+
+// Take profit / stop loss in the stock's trading currency
+function tpsl(s) {
+  if (!isNum(s.px)) return null;
+  const hasBeta = isNum(s.beta) && s.beta > 0;
+  const slPct = hasBeta ? clamp(0.08 * s.beta, 0.06, 0.2) : (s.type === 'ETF' ? 0.07 : 0.1);
+  const sl = s.px * (1 - slPct);
+  let tp, src;
+  if (isNum(s.tgt) && s.nA >= 3 && isNum(s.up) && s.up >= 1.5 * slPct && s.up <= 0.8) {
+    tp = s.tgt; src = `Kursziel von ${s.nA} Analysten`;
+  } else {
+    tp = s.px * (1 + 2.5 * slPct); src = 'Chance/Risiko 2,5 : 1';
+  }
+  return { sl, slPct, tp, tpPct: tp / s.px - 1, src, crv: (tp - s.px) / (s.px - sl), slSrc: hasBeta ? `Beta ${NF[2].format(s.beta)}` : 'Standard' };
+}
+
+function computePlan() {
+  const budget = PLAN.budget || 0;
+  const rows = PLAN.items.map((it) => ({ it, s: BYSYM[it.s], amount: 0 }));
+  if (PLAN.frozen) {
+    rows.forEach((r) => {
+      r.amount = r.it.status === 'bought' ? (r.it.inv ?? r.it.amt ?? 0) : r.it.status === 'skipped' ? 0 : (r.it.amt ?? 0);
+      r.planned = r.it.amt ?? 0;
+      r.unplanned = r.it.amt === undefined && r.it.status === 'open';
+    });
+  } else {
+    const invested = rows.filter((r) => r.it.status === 'bought').reduce((a, r) => a + (r.it.inv || 0), 0);
+    const pool = Math.max(0, budget - invested);
+    const active = rows.filter((r) => r.it.status === 'open' && r.s);
+    const w = planWeights(active.map((r) => r.s), PLAN.mode);
+    active.forEach((r, i) => { r.amount = round2(pool * w[i]); });
+    if (active.length) { // put the rounding cent(s) on the largest position so the total matches exactly
+      const diff = round2(pool - active.reduce((a, r) => a + r.amount, 0));
+      const top = active.reduce((a, r) => (r.amount > a.amount ? r : a));
+      top.amount = round2(top.amount + diff);
+    }
+    rows.forEach((r) => {
+      if (r.it.status === 'bought') r.amount = r.it.inv || 0;
+      r.planned = r.amount;
+    });
+  }
+  const invested = rows.filter((r) => r.it.status === 'bought').reduce((a, r) => a + (r.it.inv || 0), 0);
+  const open = rows.filter((r) => r.it.status === 'open').reduce((a, r) => a + r.amount, 0);
+  const skipped = rows.filter((r) => r.it.status === 'skipped').reduce((a, r) => a + (r.planned || 0), 0);
+  return { rows, budget, invested, open, skipped, rest: Math.max(0, budget - invested - open) };
+}
+
+function freezePlan(auto = false) {
+  if (PLAN.frozen) return;
+  const { rows } = computePlan();
+  rows.forEach((r) => { if (r.it.status !== 'bought') r.it.amt = r.amount; else r.it.amt = r.it.amt ?? r.it.inv; });
+  PLAN.frozen = true;
+  savePlan();
+  if (auto) toast('❄ Aufteilung eingefroren – die Beträge ändern sich jetzt nicht mehr.');
+}
+
+function unfreezePlan() {
+  PLAN.frozen = false;
+  PLAN.items.forEach((it) => { if (it.status !== 'bought') delete it.amt; });
+  savePlan();
+}
+
+function togglePlan(sym) {
+  if (!BYSYM[sym]) return;
+  if (inPlan(sym)) {
+    PLAN.items = PLAN.items.filter((i) => i.s !== sym);
+    toast(`${shortName(BYSYM[sym])} aus dem Kaufplan entfernt`);
+  } else {
+    PLAN.items.push({ s: sym, status: 'open' });
+    toast(PLAN.frozen
+      ? `${shortName(BYSYM[sym])} hinzugefügt – Aufteilung ist eingefroren (zum Neuverteilen „Auftauen“)`
+      : `${shortName(BYSYM[sym])} zum Kaufplan hinzugefügt`);
+  }
+  if (!PLAN.items.length) { PLAN.frozen = false; }
+  savePlan();
+  refreshPlanUi();
+}
+
+function refreshPlanUi() {
+  const n = PLAN.items.length;
+  const badge = $('#planCount');
+  badge.hidden = n === 0;
+  badge.textContent = n;
+  document.querySelectorAll('[data-plan]').forEach((b) => {
+    const on = inPlan(b.dataset.plan);
+    b.classList.toggle('on', on);
+    b.textContent = planBtnLabel(on, !!b.dataset.long);
+    b.title = on ? 'Im Kaufplan' : 'Zum Kaufplan';
+    b.setAttribute('aria-label', on ? 'Aus dem Kaufplan entfernen' : 'Zum Kaufplan hinzufügen');
+  });
+  if ($('#plan').open) renderPlan();
+}
+
+function renderPlan() {
+  const P = computePlan();
+  const budgetIn = $('#planBudget');
+  if (document.activeElement !== budgetIn) {
+    budgetIn.value = PLAN.budget ? new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2 }).format(PLAN.budget) : '';
+  }
+  budgetIn.disabled = PLAN.frozen;
+  $('#planMode').value = PLAN.mode;
+  $('#planMode').disabled = PLAN.frozen;
+  $('#planTitle').textContent = `Kaufplan${PLAN.items.length ? ` (${PLAN.items.length})` : ''}`;
+
+  $('#planFreeze').innerHTML = PLAN.items.length
+    ? (PLAN.frozen
+      ? `<div class="freeze-on"><span>❄ <b>Aufteilung eingefroren</b> – Beträge bleiben fest, Ausgelassenes wird nicht investiert.</span>
+          <button class="btn ghost" data-plan-act="unfreeze">Auftauen</button></div>`
+      : `<div class="freeze-off"><span>Die Aufteilung passt sich an, wenn du Aktien hinzufügst oder entfernst.</span>
+          <button class="btn" data-plan-act="freeze" ${PLAN.budget ? '' : 'disabled'}>❄ Einfrieren</button></div>`)
+    : '';
+
+  const seg = (v) => (P.budget ? (v / P.budget) * 100 : 0);
+  $('#planSummary').innerHTML = PLAN.items.length && P.budget ? `
+    <div class="ps-bar">
+      <i class="ps-inv" style="width:${seg(P.invested)}%"></i><i class="ps-open" style="width:${seg(P.open)}%"></i>
+    </div>
+    <div class="ps-grid">
+      <div><small><i class="dot ps-inv"></i>Gekauft</small><b>${eur(P.invested)}</b></div>
+      <div><small><i class="dot ps-open"></i>Noch offen</small><b>${eur(P.open)}</b></div>
+      <div><small><i class="dot ps-rest"></i>Nicht investiert</small><b>${eur(P.rest)}</b></div>
+    </div>` : '';
+
+  $('#planList').innerHTML = PLAN.items.length ? P.rows.map((r) => planItemHtml(r, P)).join('') : `
+    <div class="plan-empty">
+      <div class="pe-icon">+</div>
+      <b>Noch keine Aktien im Kaufplan</b>
+      <p class="muted">Tippe im Screener, in deinen Favoriten oder in der Detailansicht auf <span class="plus demo">+</span>,
+        um Aktien oder ETFs hier zu sammeln. Dann gibst du oben den Betrag ein, und die Seite schlägt eine Aufteilung vor.</p>
+    </div>`;
+
+  const bought = PLAN.items.filter((i) => i.status === 'bought' && (i.inv || 0) > 0);
+  const boughtSum = bought.reduce((a, i) => a + i.inv, 0);
+  $('#planFoot').innerHTML = PLAN.items.length ? `
+    <button class="btn ghost" data-plan-act="clear">Liste leeren</button>
+    <button class="btn primary" data-plan-act="commit" ${bought.length ? '' : 'disabled'}>
+      ${bought.length ? `OK – ${bought.length} ${bought.length === 1 ? 'Kauf' : 'Käufe'} (${eur(boughtSum, 0)}) ins Portfolio` : 'OK – ins Portfolio'}
+    </button>` : '';
+}
+
+function planItemHtml(r, P) {
+  const { it, s } = r;
+  if (!s) {
+    return `<div class="pl-item missing"><div class="pl-head"><div class="pl-name"><b>${esc(it.s)}</b>
+      <span class="tk">Nicht mehr in den Daten</span></div><button class="icon-btn" data-plan-del="${esc(it.s)}" aria-label="Entfernen">✕</button></div></div>`;
+  }
+  const t = tpsl(s);
+  const priceEur = priceIn(s, 'EUR');
+  const pctOfBudget = P.budget ? r.amount / P.budget : 0;
+  const shares = priceEur && r.amount ? r.amount / priceEur : null;
+  const scoreHtml = isNum(s.score)
+    ? `<span class="pill lv-${s.label}"><span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span></span>`
+    : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : '';
+  const pxD = (v) => `${NF[v >= 1000 ? 0 : 2].format(v)} ${esc(s.cur || '')}`;
+  const status = it.status;
+
+  let alloc;
+  if (status === 'skipped') {
+    alloc = `<div class="pl-alloc"><span class="pl-amt muted">Ausgelassen</span><span class="tk">${eur(r.planned)} bleiben uninvestiert</span></div>`;
+  } else if (r.unplanned) {
+    alloc = `<div class="pl-alloc"><span class="pl-amt muted">Nicht eingeplant</span><span class="tk">Nach dem Einfrieren hinzugefügt – „Auftauen“ verteilt neu</span></div>`;
+  } else {
+    alloc = `<div class="pl-alloc">
+      <span class="pl-pct">${P.budget ? NF[1].format(pctOfBudget * 100) + ' %' : '–'}</span>
+      <span class="pl-amt">${P.budget ? eur(r.amount) : 'Betrag eingeben'}</span>
+      <span class="tk">${shares ? `≈ ${fmtShares(shares)} Stk. à ${priceFmt(s)}` : priceFmt(s)}</span>
+    </div>
+    <div class="bar pl-bar"><i style="width:${(pctOfBudget * 100).toFixed(1)}%"></i></div>`;
+  }
+
+  const risk = t ? `<div class="pl-risk">
+      <div><small>Take Profit</small><b>${pxD(t.tp)}</b><span class="up">+${NF[1].format(t.tpPct * 100)} %</span><em>${esc(t.src)}</em></div>
+      <div><small>Stop Loss</small><b>${pxD(t.sl)}</b><span class="down">−${NF[1].format(t.slPct * 100)} %</span><em>${esc(t.slSrc)}</em></div>
+      <div><small>Chance/Risiko</small><b>${NF[1].format(t.crv)} : 1</b><em>Kurs ${pxD(s.px)}</em></div>
+    </div>` : '';
+
+  let actions;
+  if (status === 'bought') {
+    actions = `<div class="pl-actions done"><span class="pl-done">✓ Gekauft – investiert</span>
+      <span class="pl-inv"><input type="text" inputmode="decimal" data-plan-inv="${esc(s.s)}" value="${NF[2].format(it.inv || 0).replace(/\./g, '')}" aria-label="Investierter Betrag"><b>€</b></span>
+      <button class="btn ghost" data-plan-undo="${esc(s.s)}">Rückgängig</button></div>`;
+  } else if (status === 'skipped') {
+    actions = `<div class="pl-actions"><button class="btn ghost" data-plan-undo="${esc(s.s)}">Rückgängig</button></div>`;
+  } else {
+    const can = P.budget && r.amount > 0;
+    actions = `<div class="pl-actions">
+      <button class="btn primary" data-plan-buy="${esc(s.s)}" ${can ? '' : 'disabled'}>✓ Gekauft</button>
+      <button class="btn" data-plan-skip="${esc(s.s)}" ${P.budget ? '' : 'disabled'}>Auslassen</button></div>`;
+  }
+
+  return `<div class="pl-item st-${status}">
+    <div class="pl-head">
+      <div class="pl-name" data-plan-open="${esc(s.s)}"><b>${esc(s.n)}</b><span class="tk">${esc(s.s)} ${scoreHtml}</span></div>
+      <button class="icon-btn" data-plan-del="${esc(s.s)}" aria-label="Aus dem Kaufplan entfernen" title="Entfernen">✕</button>
+    </div>
+    ${alloc}
+    ${status === 'skipped' ? '' : risk}
+    ${actions}
+  </div>`;
+}
+
+function commitPlan() {
+  const bought = PLAN.items.filter((i) => i.status === 'bought' && (i.inv || 0) > 0 && BYSYM[i.s]);
+  if (!bought.length) return;
+  const sum = bought.reduce((a, i) => a + i.inv, 0);
+  const missing = bought.filter((i) => !priceIn(BYSYM[i.s], 'EUR'));
+  if (missing.length) { alert('Für einige Werte fehlt der Wechselkurs – bitte später erneut versuchen.'); return; }
+  const openLeft = PLAN.items.filter((i) => i.status === 'open').length;
+  const msg = `${bought.length} ${bought.length === 1 ? 'Kauf' : 'Käufe'} über ${eur(sum)} ins Portfolio übernehmen?\n\n`
+    + 'Bestehende Positionen werden um die neuen Stücke ergänzt, nichts wird überschrieben.'
+    + (openLeft ? `\n${openLeft} noch offene Position(en) bleiben im Kaufplan.` : '\nDer Kaufplan wird danach geleert.');
+  if (!confirm(msg)) return;
+  bought.forEach((i) => {
+    const shares = i.inv / priceIn(BYSYM[i.s], 'EUR');
+    const existing = PF.positions.find((p) => p.s === i.s);
+    if (existing) existing.shares += shares;
+    else PF.positions.push({ s: i.s, shares });
+  });
+  savePF();
+  const remaining = PLAN.items.filter((i) => i.status === 'open');
+  if (remaining.length) {
+    PLAN.items = remaining;
+    PLAN.budget = PLAN.frozen ? round2(remaining.reduce((a, i) => a + (i.amt || 0), 0)) : Math.max(0, round2((PLAN.budget || 0) - sum));
+  } else {
+    PLAN.items = []; PLAN.frozen = false; PLAN.budget = null;
+  }
+  savePlan();
+  refreshPlanUi();
+  if (state.mode === 'portfolio') renderPortfolio();
+  toast(`${bought.length} ${bought.length === 1 ? 'Position' : 'Positionen'} ins Portfolio übernommen`);
+}
+
+function openPlan() {
+  const dlg = $('#plan');
+  renderPlan();
+  if (!dlg.open) {
+    dlg.showModal();
+    history.pushState({ sr: 'plan' }, '');
+  }
+}
+
+function bindPlan() {
+  // "+" buttons anywhere (table, cards, detail) – capture phase so rows/cards don't open the detail view
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-plan]');
+    if (!b) return;
+    e.preventDefault();
+    e.stopPropagation();
+    togglePlan(b.dataset.plan);
+  }, true);
+
+  $('#planOpen').addEventListener('click', openPlan);
+  const dlg = $('#plan');
+  dlg.addEventListener('close', () => { if (history.state && history.state.sr === 'plan') history.back(); });
+  window.addEventListener('popstate', () => {
+    if (dlg.open && !(history.state && (history.state.sr === 'plan' || history.state.sr === 'detail'))) dlg.close();
+  });
+
+  $('#planBudget').addEventListener('input', (e) => {
+    PLAN.budget = parseAmount(e.target.value);
+    savePlan();
+    renderPlan();
+  });
+  $('#planBudget').addEventListener('keydown', (e) => { if (e.key === 'Enter') e.target.blur(); });
+  $('#planMode').addEventListener('change', (e) => { PLAN.mode = e.target.value; savePlan(); renderPlan(); });
+
+  dlg.addEventListener('change', (e) => {
+    const inv = e.target.closest('[data-plan-inv]');
+    if (!inv) return;
+    const it = PLAN.items.find((i) => i.s === inv.dataset.planInv);
+    const v = parseAmount(inv.value);
+    if (it && v) { it.inv = round2(v); savePlan(); }
+    renderPlan();
+  });
+
+  dlg.addEventListener('click', (e) => {
+    if (e.target === dlg || e.target.closest('[data-plan-close]')) { dlg.close(); return; }
+    const el = (attr) => e.target.closest(`[${attr}]`);
+    const item = (sym) => PLAN.items.find((i) => i.s === sym);
+    let x;
+    if ((x = el('data-plan-act'))) {
+      const act = x.dataset.planAct;
+      if (act === 'freeze') { freezePlan(); toast('❄ Aufteilung eingefroren'); }
+      if (act === 'unfreeze') {
+        const hasBought = PLAN.items.some((i) => i.status === 'bought');
+        if (!hasBought || confirm('Aufteilung auftauen? Bereits gekaufte Beträge bleiben, der Rest des Budgets wird auf die offenen Positionen neu verteilt.')) unfreezePlan();
+      }
+      if (act === 'clear' && confirm('Kaufplan komplett leeren? Dein Portfolio bleibt unverändert.')) {
+        PLAN.items = []; PLAN.frozen = false; savePlan(); refreshPlanUi();
+      }
+      if (act === 'commit') { commitPlan(); return; }
+      renderPlan();
+      return;
+    }
+    if ((x = el('data-plan-buy'))) {
+      freezePlan(true);
+      const it = item(x.dataset.planBuy);
+      it.status = 'bought'; it.inv = it.amt ?? 0;
+      savePlan(); renderPlan(); return;
+    }
+    if ((x = el('data-plan-skip'))) {
+      freezePlan(true);
+      item(x.dataset.planSkip).status = 'skipped';
+      savePlan(); renderPlan(); return;
+    }
+    if ((x = el('data-plan-undo'))) {
+      const it = item(x.dataset.planUndo);
+      it.status = 'open'; delete it.inv;
+      savePlan(); renderPlan(); return;
+    }
+    if ((x = el('data-plan-del'))) {
+      const it = item(x.dataset.planDel);
+      if (it && it.status === 'bought' && !confirm('Diese Position ist als gekauft markiert. Trotzdem entfernen? Sie wird dann nicht ins Portfolio übernommen.')) return;
+      PLAN.items = PLAN.items.filter((i) => i.s !== x.dataset.planDel);
+      if (!PLAN.items.length) PLAN.frozen = false;
+      savePlan(); refreshPlanUi(); renderPlan(); return;
+    }
+    if ((x = el('data-plan-open'))) openDetail(x.dataset.planOpen);
+  });
+}
+
 /* ---------------------------------------------------------------- init */
 
 function fillSelects() {
@@ -1297,7 +1675,7 @@ function renderMeta() {
   const short = isNaN(d) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
   $('#meta').innerHTML = `<span class="meta-long">Datenstand <b>${esc(when)}</b> · ${STOCKS.length.toLocaleString('de-DE')} Aktien<span class="meta-src"> · Quelle: ${esc(DATA.source)}</span><br>
     S&amp;P 500 (52 W): <b>${pct(DATA.sp500_52w, 1, true, true)}</b> · <a href="#erklaerung" style="color:inherit">Erklärungen</a></span>
-    <span class="meta-short">Stand <b>${esc(short)}</b> · S&amp;P 500 52 W <b>${pct(DATA.sp500_52w, 1, true, true)}</b></span>`;
+    <span class="meta-short">Stand <b>${esc(short)}</b><br>S&amp;P 500 52 W <b>${pct(DATA.sp500_52w, 1, true, true)}</b></span>`;
   const w = DATA.weights || {};
   const names = { val: 'Bewertung (Forward-KGV, PEG, KGV, EV/EBITDA, FCF-Rendite – relativ zur Branche)', qual: 'Qualität (ROE, Margen, Verschuldung)', grow: 'Wachstum (Umsatz, Gewinn, erwartetes EPS-Wachstum)', ana: 'Analysten (Konsens, Kursziel-Potenzial, Gewinnrevisionen)', mom: 'Momentum (Performance vs. S&P 500, 200-Tage-Linie)' };
   $('#weightsList').innerHTML = Object.entries(w).map(([k, v]) => `<li><b>${NF[0].format(v * 100)} %</b> ${names[k] || k}</li>`).join('');
@@ -1308,6 +1686,7 @@ async function init() {
   readHash();
   bindEvents();
   bindPortfolio();
+  bindPlan();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');
@@ -1337,6 +1716,7 @@ async function init() {
   renderViews();
   update({ resetPage: false });
   setMode(state.mode, { initial: true });
+  refreshPlanUi();
   if (imported) toast('Portfolio und Favoriten wurden übernommen.');
 }
 

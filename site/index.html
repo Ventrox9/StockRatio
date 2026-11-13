@@ -19,6 +19,10 @@
         </div>
       </div>
       <div class="meta" id="meta">Lade Daten …</div>
+      <button class="plan-btn" id="planOpen" aria-label="Kaufplan öffnen" title="Kaufplan">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6h11M9 12h11M9 18h11"/><path d="M4 6h.01M4 12h.01M4 18h.01"/></svg>
+        <span class="plan-txt">Kaufplan</span><span class="count-badge" id="planCount" hidden>0</span>
+      </button>
     </div>
   </header>
 
@@ -211,6 +215,48 @@
       <p class="disclaimer"><b>Keine Anlageberatung.</b> Die Daten stammen von Yahoo Finance, werden einmal täglich aktualisiert und können fehlerhaft oder unvollständig sein. Score und Signal sind eine rein quantitative Einordnung auf Basis von Vergangenheitsdaten und Analystenschätzungen – sie sagen keine Kurse voraus. Prüfe jede Aktie selbst, bevor du investierst.</p>
     </section>
   </main>
+
+  <dialog id="plan" class="drawer" aria-labelledby="planTitle">
+    <div class="plan-inner">
+      <div class="plan-head">
+        <div>
+          <h2 id="planTitle">Kaufplan</h2>
+          <p class="muted">Temporäre Liste – nicht dein Portfolio</p>
+        </div>
+        <button class="close" aria-label="Schließen" data-plan-close>×</button>
+      </div>
+      <div class="plan-body">
+        <div class="plan-setup">
+          <label class="pl-budget"><span>Betrag, den du investieren möchtest</span>
+            <span class="pl-budget-in"><input id="planBudget" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 5.000"><b>€</b></span></label>
+          <label class="pl-mode"><span>Aufteilung</span>
+            <select id="planMode">
+              <option value="smart">Intelligent (Score &amp; Risiko)</option>
+              <option value="equal">Gleichmäßig</option>
+            </select></label>
+        </div>
+        <div class="plan-freeze" id="planFreeze"></div>
+        <div class="plan-summary" id="planSummary"></div>
+        <div class="plan-list" id="planList"></div>
+        <details class="plan-help">
+          <summary>Wie wird aufgeteilt? Wie entstehen Take Profit &amp; Stop Loss?</summary>
+          <ul>
+            <li><b>Intelligent:</b> Je höher der StockRatio-Score, desto größer der Anteil (Gewicht ∝ Score²) – eine Aktie mit Score 90
+              bekommt also rund doppelt so viel wie eine mit Score 64. Sehr schwankungsstarke Aktien (hohes Beta) werden um höchstens 10 % gedämpft.
+              ETFs zählen wie Score 60, Aktien ohne Score wie 40.</li>
+            <li><b>Grenzen:</b> höchstens 40 % je Position (bei 2–3 Positionen 70 % bzw. 50 %), mindestens 5 %.</li>
+            <li><b>Stop Loss:</b> 8 % × Beta, begrenzt auf 6–20 % unter dem aktuellen Kurs (ETFs ohne Beta: 7 %).</li>
+            <li><b>Take Profit:</b> Analysten-Kursziel, sofern es mindestens 1,5× so weit entfernt ist wie der Stop Loss (max. +80 %);
+              sonst 2,5× der Stop-Abstand (Chance/Risiko 2,5 : 1).</li>
+            <li><b>❄ Einfrieren:</b> Sobald du eine Position als gekauft oder ausgelassen markierst, wird die Aufteilung automatisch eingefroren.
+              Ausgelassenes Geld bleibt dann einfach uninvestiert, die anderen Beträge ändern sich nicht.</li>
+          </ul>
+          <p class="muted">Rein rechnerische Orientierung, keine Anlageberatung.</p>
+        </details>
+      </div>
+      <div class="plan-foot" id="planFoot"></div>
+    </div>
+  </dialog>
 
   <dialog id="detail" aria-labelledby="dTitle">
     <div class="d-inner" id="detailBody"></div>
