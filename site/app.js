@@ -1265,7 +1265,7 @@ function bindPortfolio() {
 
 /* transfer portfolio + favourites to another device via a link */
 function shareTransferLink() {
-  const payload = { v: 1, f: [...favs], p: PF, l: LEVELS.items };
+  const payload = { v: 1, f: [...favs], p: PF, l: LEVELS.items, k: vapid };
   const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const url = `${location.origin}${location.pathname}#import=${encodeURIComponent(b64)}`;
   const text = 'StockRatio: Portfolio & Favoriten übernehmen';
@@ -1295,6 +1295,7 @@ function readImportLink() {
       .map((p) => ({ s: p.s, shares: p.shares }));
     savePF();
     if (payload.l && typeof payload.l === 'object') { LEVELS.items = payload.l; saveLevels(); }
+    if (payload.k && typeof payload.k.pub === 'string') { vapid = payload.k; store.set(VAPID_KEY, vapid); }
     return true;
   } catch {
     alert('Der Übertragungs-Link ist ungültig.');
@@ -1830,8 +1831,11 @@ function bindLevels() {
 
 /* ---------------------------------------------------------------- settings & notifications */
 
-// public VAPID key (the private one lives only in the GitHub secret VAPID_PRIVATE_KEY)
-const VAPID_PUBLIC = 'BBH2MCm1_9LohVwEWvmARjbUxg2LaM2EazRB_qy5w1vKoTa0FkjzGIuYzcMAZEVPYsDs3P_h0-hTZxbdrhZFzDI';
+// Push keys are generated on the user's device (Einstellungen → "Schlüssel erzeugen").
+// Only the public key is stored; the private key is shown once to be saved as GitHub secret.
+const VAPID_KEY = 'stockratio.push.vapid.v1';
+let vapid = store.get(VAPID_KEY, null); // { pub, at }
+let shownPrivateKey = null;             // kept in memory only, until the dialog is closed
 const NOTIFY = Object.assign({}, (self.SRNotify || {}).DEFAULTS, store.get('stockratio.notify.v1', {}));
 const saveNotify = () => store.set('stockratio.notify.v1', NOTIFY);
 const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
@@ -1860,6 +1864,45 @@ function repoInfo() {
   return { owner, repo, base: `https://github.com/${owner}/${repo}` };
 }
 
+const bytesToB64 = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+async function generateKeys() {
+  if (vapid && !confirm('Neue Schlüssel erzeugen? Danach müssen beide Secrets (VAPID_PRIVATE_KEY und PUSH_SUBSCRIPTIONS) auf GitHub neu eingetragen werden.')) return;
+  const kp = await crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
+  const jwk = await crypto.subtle.exportKey('jwk', kp.privateKey);
+  const raw = new Uint8Array(await crypto.subtle.exportKey('raw', kp.publicKey));
+  vapid = { pub: bytesToB64(raw), at: new Date().toISOString() };
+  store.set(VAPID_KEY, vapid);
+  shownPrivateKey = jwk.d; // base64url, raw 32 bytes – the format the workflow expects
+  const old = await currentSubscription();
+  if (old) await old.unsubscribe().catch(() => {}); // the old subscription belongs to the old key
+  renderSettings();
+  await subscribePush();
+}
+
+async function subscribePush() {
+  if (!vapid || !pushSupported() || Notification.permission !== 'granted') return false;
+  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+  try {
+    const reg = await Promise.race([navigator.serviceWorker.ready, timeout(10000)]);
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await Promise.race([
+        reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(vapid.pub) }),
+        timeout(20000),
+      ]);
+    }
+    store.set('stockratio.push.sub', sub.toJSON());
+    toast('Push-Verbindung hergestellt');
+    return true;
+  } catch {
+    toast('Push-Verbindung gerade nicht möglich – Hinweise kommen beim Öffnen der Seite');
+    return false;
+  } finally {
+    renderSettings();
+  }
+}
+
 function b64ToBytes(b64) {
   const pad = '='.repeat((4 - (b64.length % 4)) % 4);
   const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
@@ -1885,23 +1928,9 @@ async function enableNotifications() {
   }
   NOTIFY.enabled = true;
   saveNotify();
-  renderSettings(); // switches usable right away; the push connection follows
-  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
-  try {
-    const reg = await Promise.race([navigator.serviceWorker.ready, timeout(10000)]);
-    let sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      sub = await Promise.race([
-        reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) }),
-        timeout(20000),
-      ]);
-    }
-    store.set('stockratio.push.sub', sub.toJSON());
-    toast('Benachrichtigungen aktiviert');
-  } catch {
-    toast('Benachrichtigungen aktiv – Push-Verbindung gerade nicht möglich (Hinweise kommen beim Öffnen der Seite)');
-  }
-  renderSettings();
+  renderSettings(); // switches usable right away
+  toast('Benachrichtigungen aktiviert');
+  if (vapid) await subscribePush(); // push connection only once keys exist (see "Push einrichten")
 }
 
 async function disconnectPush() {
@@ -1985,10 +2014,20 @@ async function renderSettings() {
         Die Prüfung selbst passiert auf deinem Gerät – dein Portfolio verlässt es nie. Ohne diese Einrichtung bekommst du die Hinweise beim Öffnen der Seite.</p>
       <ol class="set-steps">
         <li>Oben <b>„Benachrichtigungen aktivieren“</b> und erlauben.</li>
+        <li>${vapid
+          ? `Schlüssel vorhanden (erzeugt am ${new Date(vapid.at).toLocaleDateString('de-DE')}).
+             <button class="btn ghost" data-set-act="keys">Neu erzeugen</button>`
+          : `<button class="btn" data-set-act="keys" ${active ? '' : 'disabled'}>🔑 Schlüssel erzeugen</button>
+             – entsteht auf diesem Gerät, niemand sonst sieht ihn.`}
+          ${shownPrivateKey ? `<div class="key-box">
+            <small>Privater Schlüssel – <b>nur jetzt sichtbar</b>. Als Secret <code>VAPID_PRIVATE_KEY</code> speichern:</small>
+            <input type="text" readonly value="${esc(shownPrivateKey)}" aria-label="Privater Schlüssel">
+            <div class="set-row"><button class="btn" data-set-act="copykey">Schlüssel kopieren</button>
+            <a class="btn ghost" href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a></div>
+          </div>` : ''}</li>
         <li><button class="btn" data-set-act="copy" ${sub ? '' : 'disabled'}>Abo-Code kopieren</button>
-          und auf GitHub als Secret <code>PUSH_SUBSCRIPTIONS</code> speichern:
+          und als Secret <code>PUSH_SUBSCRIPTIONS</code> speichern:
           <a href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a></li>
-        <li>Einmalig zusätzlich das Secret <code>VAPID_PRIVATE_KEY</code> (privater Schlüssel) anlegen.</li>
         <li>Testen: <a href="${base}/actions/workflows/notify.yml" target="_blank" rel="noopener">Actions → „Benachrichtigungen senden“ ↗</a>
           → <i>Run workflow</i> mit Typ <code>test</code>.</li>
       </ol>
@@ -2040,7 +2079,10 @@ function openSettings() {
 function bindSettings() {
   $('#settingsOpen').addEventListener('click', openSettings);
   const dlg = $('#settings');
-  dlg.addEventListener('close', () => { if (history.state && history.state.sr === 'settings') history.back(); });
+  dlg.addEventListener('close', () => {
+    shownPrivateKey = null; // never kept beyond this dialog
+    if (history.state && history.state.sr === 'settings') history.back();
+  });
   window.addEventListener('popstate', () => {
     if (dlg.open && !(history.state && history.state.sr === 'settings')) dlg.close();
   });
@@ -2058,6 +2100,12 @@ function bindSettings() {
     const a = act.dataset.setAct;
     if (a === 'enable') await enableNotifications();
     if (a === 'test') await testNotification();
+    if (a === 'keys') await generateKeys();
+    if (a === 'copykey' && shownPrivateKey) {
+      const k = shownPrivateKey;
+      if (navigator.clipboard) navigator.clipboard.writeText(k).then(() => toast('Privater Schlüssel kopiert'), () => prompt('Privater Schlüssel:', k));
+      else prompt('Privater Schlüssel:', k);
+    }
     if (a === 'disconnect' && confirm('Push-Verbindung für dieses Gerät beenden? Danach musst du einen neuen Abo-Code bei GitHub hinterlegen.')) await disconnectPush();
     if (a === 'copy') {
       const sub = await currentSubscription();
