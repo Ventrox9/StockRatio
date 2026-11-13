@@ -34,6 +34,7 @@ jobs:
       - name: Push senden
         env:
           VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
-          PUSH_SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS }}
+          # Abo-Code(s) der Geräte – als Secret oder (enthält nichts Geheimes) auch als Repository-Variable
+          PUSH_SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS || vars.PUSH_SUBSCRIPTIONS }}
           SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
         run: python -m stockratio.notify --type "${{ inputs.type || 'auto' }}"

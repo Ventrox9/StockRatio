@@ -37,9 +37,44 @@ def parse_subscriptions(raw: str) -> list[dict]:
         data = json.loads(raw)
         items = data if isinstance(data, list) else [data]
     except json.JSONDecodeError:
-        items = [json.loads(line) for line in raw.splitlines() if line.strip()]
+        items = []
+        for line in raw.splitlines():
+            try:
+                items.append(json.loads(line.strip().rstrip(",")))
+            except json.JSONDecodeError:
+                continue
     subs = [s for s in items if isinstance(s, dict) and s.get("endpoint") and (s.get("keys") or {}).get("p256dh")]
     return subs
+
+
+def check_private_key(key: str) -> str | None:
+    """Returns a problem description, or None if the key looks like a raw base64url P-256 key."""
+    import base64
+
+    if not key:
+        return "Secret VAPID_PRIVATE_KEY fehlt oder ist leer."
+    try:
+        raw = base64.urlsafe_b64decode(key + "=" * (-len(key) % 4))
+    except ValueError:
+        raw = b""
+    if len(raw) != 32:
+        return ("VAPID_PRIVATE_KEY hat nicht das erwartete Format (43 Zeichen aus der App, ohne Anführungszeichen "
+                "oder Leerzeichen). In der App neu erzeugen und beide Secrets neu eintragen.")
+    return None
+
+
+def check_subscriptions(raw: str) -> tuple[list[dict], str | None]:
+    """Parsed subscriptions plus a problem description (None if fine)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return [], ("Secret PUSH_SUBSCRIPTIONS fehlt oder ist leer. Bitte unter Settings → Secrets and variables → "
+                    "Actions → Repository secrets genau so benennen (Großbuchstaben, mit S am Ende) und den Abo-Code "
+                    "aus der App einfügen (App → Glocke → „Abo-Code kopieren“).")
+    subs = parse_subscriptions(raw)
+    if not subs:
+        return [], ("PUSH_SUBSCRIPTIONS ist gesetzt, enthält aber keinen gültigen Abo-Code. Er muss mit "
+                    '{"endpoint":"https://… beginnen – in der App „Abo-Code kopieren“ und komplett einfügen.')
+    return subs, None
 
 
 def message_type(requested: str, now: datetime | None = None) -> str:
@@ -85,13 +120,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--type", default="auto", choices=["auto", "update", "tradeday", "test"])
     args = parser.parse_args(argv)
 
-    private_key = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
-    subs = parse_subscriptions(os.environ.get("PUSH_SUBSCRIPTIONS", ""))
-    if not private_key or not subs:
-        missing = [n for n, v in (("VAPID_PRIVATE_KEY", private_key), ("PUSH_SUBSCRIPTIONS", subs)) if not v]
+    private_key = os.environ.get("VAPID_PRIVATE_KEY", "").strip().strip('"').strip("'").strip()
+    subs, sub_problem = check_subscriptions(os.environ.get("PUSH_SUBSCRIPTIONS", ""))
+    problems = [p for p in (check_private_key(private_key), sub_problem) if p]
+    print(f"VAPID_PRIVATE_KEY: {'gesetzt' if private_key else 'FEHLT'} · PUSH_SUBSCRIPTIONS: {len(subs)} Gerät(e)")
+    if problems:
         # fail visibly: a green run that sent nothing looks like a delivered notification
-        print(f"::error::Push nicht eingerichtet (fehlende Secrets: {', '.join(missing)}) – nichts gesendet. "
-              "Einrichtung: App → Glocke → „Push auch bei geschlossener App“.")
+        print("Push nicht eingerichtet – nichts gesendet.")
+        for p in problems:
+            print(f"::error::{p}")
         return 1
 
     kind = message_type(args.type)

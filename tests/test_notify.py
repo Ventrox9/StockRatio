@@ -32,3 +32,15 @@ def test_vapid_subject_is_origin_only():
     from stockratio.notify import vapid_subject
     assert vapid_subject("https://Ventrox9.github.io/StockRatio/") == "https://ventrox9.github.io"
     assert vapid_subject("") == "https://github.com"
+
+
+def test_diagnostics(monkeypatch, capsys):
+    from stockratio import notify
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "A" * 43)
+    monkeypatch.setenv("PUSH_SUBSCRIPTIONS", "kein json")
+    assert notify.main(["--type", "test"]) == 1
+    out = capsys.readouterr().out
+    assert "keinen gültigen Abo-Code" in out and "VAPID_PRIVATE_KEY hat nicht" not in out
+    assert notify.check_private_key('"zu-kurz"'.strip('"')) is not None
+    subs, problem = notify.check_subscriptions('{"endpoint":"https://x","keys":{"p256dh":"a","auth":"b"}},')
+    assert len(subs) == 1 and problem is None

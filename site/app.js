@@ -2441,9 +2441,14 @@ async function renderSettings() {
             <div class="set-row"><button class="btn" data-set-act="copykey">Schlüssel kopieren</button>
             <a class="btn ghost" href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a></div>
           </div>` : ''}</li>
-        <li><button class="btn" data-set-act="copy" ${sub ? '' : 'disabled'}>Abo-Code kopieren</button>
-          und als Secret <code>PUSH_SUBSCRIPTIONS</code> speichern:
-          <a href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a></li>
+        <li>${sub
+          ? `<button class="btn" data-set-act="copy">Abo-Code kopieren</button>
+            und als Secret <code>PUSH_SUBSCRIPTIONS</code> speichern (Name genau so):
+            <a href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a>
+            <div class="key-box sub-box"><small>Dein Abo-Code – muss mit <code>{"endpoint":"https://</code> beginnen und komplett eingefügt werden:</small>
+              <input type="text" readonly value="${esc(JSON.stringify(sub.toJSON()))}" aria-label="Abo-Code"></div>`
+          : `<b class="set-warn">Noch keine Push-Verbindung auf diesem Gerät</b> – deshalb gibt es noch keinen Abo-Code.
+            ${vapid && active ? '<button class="btn" data-set-act="connect">Jetzt verbinden</button>' : 'Erst Schritt 1 und 2 erledigen.'}`}</li>
         <li>Testen: <a href="${base}/actions/workflows/notify.yml" target="_blank" rel="noopener">Actions → „Benachrichtigungen senden“ ↗</a>
           → <i>Run workflow</i> mit Typ <code>test</code>.</li>
       </ol>
@@ -2546,6 +2551,7 @@ function bindSettings() {
     const a = act.dataset.setAct;
     if (a === 'enable') await enableNotifications();
     if (a === 'test') await testNotification();
+    if (a === 'connect') await subscribePush();
     if (a === 'keys') await generateKeys();
     if (a === 'copykey' && shownPrivateKey) {
       const k = shownPrivateKey;
