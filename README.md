@@ -47,9 +47,14 @@ Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprog
 
 - **Favoriten (★):** Mit dem Stern an jeder Aktie an- und abwählen; „★ Favoriten“ zeigt nur diese.
   Beim allerersten Besuch sind die Werte aus [`watchlist.txt`](watchlist.txt) vorausgewählt.
-- **Mein Portfolio:** Eigene Positionen mit Wert (in € oder $) oder Stückzahl erfassen. Die Seite rechnet den
-  Wert täglich mit den aktuellen Kursen hoch und zeigt Tagesänderung, Gewichtung, Ø Score und Performance
-  vs. S&P 500. Anzeige umschaltbar zwischen **€ und $**.
+- **Mein Portfolio:** Positionen mit Kaufbetrag (oder Stückzahl), **Kaufdatum** und **Kaufkurs** erfassen
+  (ohne Kaufkurs zählt der aktuelle Kurs). Zwei Ansichten, Anzeige umschaltbar zwischen **€ und $**:
+  - **Wertentwicklung:** aktueller Wert, Kaufdatum und Entwicklung je Position seit Kauf (in % und €), dazu die
+    Entwicklung des ganzen Portfolios seit Kauf und heute. Nachkäufe aus dem Kaufplan ergeben einen Durchschnittskurs.
+  - **Analyse:** die Positionen wie im Screener (Karten bzw. Tabelle mit allen Kennzahlen-Ansichten) plus
+    **Warnsignale** – z. B. Score seit Kauf um ≥ 15 Punkte gefallen, Signal „Negativ“/„Meiden“, Analysten nur „Halten“,
+    Gewinnschätzungen gesenkt, Kurs unter der 200-Tage-Linie oder über dem Kursziel. Standardmäßig nach den
+    meisten Warnsignalen sortiert.
 - Favoriten und Portfolio werden **nur im Browser** gespeichert (nicht im Repository). Mit
   „Auf anderes Gerät übertragen“ entsteht ein Link, der beides auf ein anderes Gerät kopiert.
 - **watchlist.txt** legt fest, welche Werte *zusätzlich* zu S&P 500 und MSCI World geladen werden

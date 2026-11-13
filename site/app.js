@@ -490,10 +490,10 @@ function matches(s) {
   return true;
 }
 
-function sortRows(rows) {
-  const col = COLUMNS[state.sort.key];
+function sortRows(rows, sort = state.sort) {
+  const col = COLUMNS[sort.key];
   if (!col) return rows;
-  const dir = state.sort.dir;
+  const dir = sort.dir;
   return rows
     .map((s) => [col.sort(s), s])
     .sort((a, b) => {
@@ -516,12 +516,14 @@ const $ = (sel) => document.querySelector(sel);
 function currentView() { return VIEWS.find((v) => v[0] === state.view) || VIEWS[0]; }
 
 function renderHead() {
-  const cols = currentView()[2];
-  $('#table thead').innerHTML = '<tr>' + cols.map((key) => {
+  $('#table thead').innerHTML = headHtml(currentView()[2], state.sort);
+}
+function headHtml(cols, sort) {
+  return '<tr>' + cols.map((key) => {
     const c = COLUMNS[key];
-    const active = state.sort.key === key;
-    const arrow = active ? (state.sort.dir === 1 ? '▲' : '▼') : '';
-    const sortAttr = active ? (state.sort.dir === 1 ? 'ascending' : 'descending') : 'none';
+    const active = sort.key === key;
+    const arrow = active ? (sort.dir === 1 ? '▲' : '▼') : '';
+    const sortAttr = active ? (sort.dir === 1 ? 'ascending' : 'descending') : 'none';
     return `<th class="${c.cls || ''}" data-sort="${key}" aria-sort="${sortAttr}" ${c.help ? `data-help title="${esc(c.help)}"` : ''}>${esc(c.label)}<span class="arrow">${arrow}</span></th>`;
   }).join('') + '</tr>';
 }
@@ -555,36 +557,39 @@ function scoreRing(s) {
   return `<div class="sc-score">${s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : '<span class="na">kein Score</span>'}</div>`;
 }
 
-function renderCards() {
-  $('#table tbody').innerHTML = '';
+function cardHtml(s, extra = '') {
   const view = currentView();
   const [keyFields, moreFields] = [view[4], view[5]];
+  const iso = countryIso(s.cty);
+  const stale = s.stale ? ' <span class="stale" title="Daten nicht aktuell">⚠</span>' : '';
+  const sub = s.type === 'ETF' ? 'ETF' : [iso, sectorDe(s.sec)].filter(Boolean).join(' · ');
+  const fav = favs.has(s.s);
+  return `<article class="scard" data-sym="${esc(s.s)}" tabindex="0">
+    <div class="sc-top">
+      ${logoHtml(s, 'lg')}
+      <div class="sc-name"><span class="nm">${esc(s.n)}</span>
+        <span class="tk"><b class="sym">${esc(s.s)}</b> · ${esc(sub)}${stale}</span></div>
+      ${scoreRing(s)}
+    </div>
+    <div class="sc-px">
+      <span class="p">${priceFmt(s)}</span>
+      <span class="chg">${pct(s.d1, 1, true, true)}</span>
+      <span class="m">${mcapFmt(s.mcap)}</span>
+      <span class="sc-act">
+        <button class="star ${fav ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="${fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}">★</button>
+        ${planBtn(s)}
+      </span>
+    </div>
+    <div class="sc-key">${keyFields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
+    <dl class="sc-more">${moreFields.map((k) => `<div><dt>${esc(COLUMNS[k].label)}</dt><dd>${COLUMNS[k].render(s)}</dd></div>`).join('')}</dl>
+    ${extra}
+  </article>`;
+}
+
+function renderCards() {
+  $('#table tbody').innerHTML = '';
   const rows = filtered.slice(0, state.shown);
-  $('#cards').innerHTML = rows.map((s) => {
-    const iso = countryIso(s.cty);
-    const stale = s.stale ? ' <span class="stale" title="Daten nicht aktuell">⚠</span>' : '';
-    const sub = s.type === 'ETF' ? 'ETF' : [iso, sectorDe(s.sec)].filter(Boolean).join(' · ');
-    const fav = favs.has(s.s);
-    return `<article class="scard" data-sym="${esc(s.s)}" tabindex="0">
-      <div class="sc-top">
-        ${logoHtml(s, 'lg')}
-        <div class="sc-name"><span class="nm">${esc(s.n)}</span>
-          <span class="tk"><b class="sym">${esc(s.s)}</b> · ${esc(sub)}${stale}</span></div>
-        ${scoreRing(s)}
-      </div>
-      <div class="sc-px">
-        <span class="p">${priceFmt(s)}</span>
-        <span class="chg">${pct(s.d1, 1, true, true)}</span>
-        <span class="m">${mcapFmt(s.mcap)}</span>
-        <span class="sc-act">
-          <button class="star ${fav ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="${fav ? 'Aus Favoriten entfernen' : 'Zu Favoriten'}">★</button>
-          ${planBtn(s)}
-        </span>
-      </div>
-      <div class="sc-key">${keyFields.map((k) => `<div><small>${esc(COLUMNS[k].label)}</small><b>${COLUMNS[k].render(s)}</b></div>`).join('')}</div>
-      <dl class="sc-more">${moreFields.map((k) => `<div><dt>${esc(COLUMNS[k].label)}</dt><dd>${COLUMNS[k].render(s)}</dd></div>`).join('')}</dl>
-    </article>`;
-  }).join('');
+  $('#cards').innerHTML = rows.map((s) => cardHtml(s)).join('');
   const rest = filtered.length - rows.length;
   const more = $('#more');
   more.hidden = rest <= 0;
@@ -847,8 +852,8 @@ function openDetail(sym) {
       <section class="card">
         <h3>Einordnung</h3>
         <ul class="reasons">
-          ${plus.map((t) => `<li class="plus">${esc(t)}</li>`).join('')}
-          ${minus.map((t) => `<li class="minus">${esc(t)}</li>`).join('')}
+          ${plus.map((t) => `<li class="r-plus">${esc(t)}</li>`).join('')}
+          ${minus.map((t) => `<li class="r-minus">${esc(t)}</li>`).join('')}
           ${!plus.length && !minus.length ? '<li class="muted">Keine auffälligen Stärken oder Schwächen.</li>' : ''}
         </ul>
       </section>
@@ -878,8 +883,6 @@ function openDetail(sym) {
     <div class="links">
       <a href="https://finance.yahoo.com/quote/${encodeURIComponent(s.s)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>
       ${s.web && /^https?:\/\//.test(s.web) ? `<a href="${esc(s.web)}" target="_blank" rel="noopener">Unternehmens-Website ↗</a>` : ''}
-      ${!isEtf && !s.s.includes('.') ? `<a href="https://www.revolut.com/stocks/${encodeURIComponent(s.s.toLowerCase())}/" target="_blank" rel="noopener">Bei Revolut ↗</a>` : ''}
-      <a href="revolut-test.html?s=${encodeURIComponent(s.s)}" title="Testet, welche Links die Revolut-App direkt mit dieser Aktie öffnen">Revolut-Link-Test</a>
       <button class="btn ghost" data-fav="${esc(s.s)}">${favs.has(s.s) ? '★ Aus Favoriten entfernen' : '☆ Zu Favoriten'}</button>
       <button class="btn ghost" data-pf="${esc(s.s)}">${held ? '✎ Portfolio-Position bearbeiten' : '+ Zum Portfolio'}</button>
       ${planBtn(s, true)}
@@ -1031,6 +1034,7 @@ function bindEvents() {
   MOBILE.addEventListener('change', () => {
     document.body.classList.remove('sheet-open');
     update({ resetPage: false });
+    if (state.mode === 'portfolio') renderPortfolio();
   });
 
   $('#export').addEventListener('click', exportCsv);
@@ -1170,26 +1174,147 @@ function setMode(mode, { initial = false } = {}) {
   if (!initial) window.scrollTo({ top: 0 });
 }
 
+/* Portfolio views: "perf" (value & performance since purchase) and "scan" (screener cards + warning signs) */
+const PFVIEW_KEY = 'stockratio.pf.view';
+const pfUi = { view: store.get(PFVIEW_KEY, 'perf') === 'scan' ? 'scan' : 'perf', sort: { key: 'warn', dir: -1 } };
+const PF_SORTS = [
+  ['warn', -1, 'Meiste Warnsignale'],
+  ['score', 1, 'Schwächster Score'],
+  ['pfPct', 1, 'Schlechteste Entwicklung'],
+  ['pfPct', -1, 'Beste Entwicklung'],
+  ['pfVal', -1, 'Größte Position'],
+  ['d1', 1, 'Heute: Verlierer'],
+  ['score', -1, 'Bester Score'],
+];
+
+const todayIso = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+};
+const dataDate = () => String((DATA && DATA.generated) || '').slice(0, 10) || todayIso();
+const holdFor = (iso) => {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+  if (!Number.isFinite(days) || days < 0) return '';
+  if (days < 1) return 'heute';
+  if (days < 60) return `${days} ${days === 1 ? 'Tag' : 'Tage'}`;
+  if (days < 730) return `${Math.round(days / 30.4)} Mon.`;
+  return `${NF[1].format(days / 365.25)} J.`;
+};
+
+// purchase cost of a position in the portfolio currency (stored at the FX rate of the day it was entered)
+function positionCost(p) {
+  if (p.cost && isNum(p.cost[PF.cur])) return p.cost[PF.cur];
+  const s = BYSYM[p.s];
+  if (s && isNum(p.buyPx)) {
+    const from = usdPerUnit(s.cur), to = usdPerUnit(PF.cur);
+    if (from && to) return (p.shares * p.buyPx * from) / to;
+  }
+  return null;
+}
+function posPerf(p) {
+  const value = positionValue(p);
+  const cost = positionCost(p);
+  const gain = isNum(value) && isNum(cost) ? value - cost : null;
+  return { value, cost, gain, pct: isNum(gain) && cost > 0 ? gain / cost : null };
+}
+const posOf = (sym) => PF.positions.find((p) => p.s === sym);
+const signed = (v, d = 2) => (isNum(v) ? `${v > 0 ? '+' : v < 0 ? '−' : ''}${money(Math.abs(v), d)}` : '–');
+const perfCls = (v) => (isNum(v) ? (v > 0 ? 'up' : v < 0 ? 'down' : '') : '');
+
+// the score is remembered when a position is added (or first seen) to show later deterioration
+function ensureRefScores() {
+  let changed = false;
+  for (const p of PF.positions) {
+    const s = BYSYM[p.s];
+    if (s && isNum(s.score) && !isNum(p.refScore)) { p.refScore = s.score; p.refDate = dataDate(); changed = true; }
+  }
+  if (changed) savePF();
+}
+
+// signs that a holding is getting weaker
+function weakSignals(s) {
+  const w = [];
+  const etf = s.type === 'ETF';
+  const p = posOf(s.s);
+  if (p && isNum(p.refScore) && isNum(s.score) && s.score <= p.refScore - 15) {
+    w.push(`Score gefallen: ${NF[0].format(p.refScore)} → ${NF[0].format(s.score)}`);
+  }
+  if (!etf && isNum(s.score) && s.score < 30) w.push(`Signal „${s.label}“`);
+  if (!etf && s.nA >= 3 && isNum(s.rec) && s.rec > 2.5) w.push(s.rec > 3.5 ? 'Analysten raten zum Verkauf' : 'Analysten nur „Halten“');
+  if (!etf && isNum(s.rev90) && s.rev90 <= -0.03) w.push(`Gewinnschätzungen gesenkt (${pct(s.rev90, 0, true)})`);
+  if (!etf && s.nA >= 3 && isNum(s.up) && s.up < 0) w.push('Kurs über dem Kursziel');
+  if (isNum(s.ma200) && s.ma200 < 0) w.push('Unter der 200-Tage-Linie');
+  if (isNum(s.hi52) && s.hi52 <= -0.25) w.push(`${pct(s.hi52, 0)} vom 52-W-Hoch`);
+  if (!etf && isNum(s.rel52) && s.rel52 <= -0.15) w.push('Deutlich schwächer als der S&P 500');
+  return w;
+}
+
+COLUMNS.warn = {
+  label: 'Warnsignale', cls: 'l', help: 'Hinweise, dass sich die Aktie verschlechtert (Score, Analysten, Trend)',
+  sort: (s) => weakSignals(s).length * 1000 + (100 - (isNum(s.score) ? s.score : 50)), dir: -1,
+  render: (s) => {
+    const w = weakSignals(s);
+    if (!w.length) return '<span class="ok-txt">✓ keine</span>';
+    return `<span class="warn-n" title="${esc(w.join(' · '))}">⚠ ${w.length}</span> <span class="tk">${esc(w[0])}${w.length > 1 ? ' …' : ''}</span>`;
+  },
+};
+COLUMNS.pfPct = {
+  label: 'Seit Kauf', help: 'Entwicklung der Position seit dem Kauf', sort: (s) => (posOf(s.s) ? posPerf(posOf(s.s)).pct : null), dir: -1,
+  render: (s) => { const p = posOf(s.s); const r = p ? posPerf(p) : {}; return isNum(r.pct) ? pct(r.pct, 1, true, true) : NA; },
+};
+COLUMNS.pfVal = {
+  label: 'Wert', help: 'Aktueller Wert der Position', sort: (s) => (posOf(s.s) ? positionValue(posOf(s.s)) : null), dir: -1,
+  render: (s) => { const p = posOf(s.s); return p ? money(positionValue(p), 0) : NA; },
+};
+
 function renderPortfolio() {
   if (!DATA) return;
+  ensureRefScores();
   const rows = PF.positions
     .map((p) => {
       const s = BYSYM[p.s];
-      const value = positionValue(p);
-      const day = isNum(value) && s && isNum(s.d1) ? value - value / (1 + s.d1) : null;
-      return { p, s, value, day };
+      const perf = posPerf(p);
+      const day = isNum(perf.value) && s && isNum(s.d1) ? perf.value - perf.value / (1 + s.d1) : null;
+      return { p, s, ...perf, day };
     })
     .sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
   const total = rows.reduce((a, r) => a + (r.value || 0), 0);
   const dayTotal = rows.reduce((a, r) => a + (r.day || 0), 0);
   const dayPct = total - dayTotal > 0 ? dayTotal / (total - dayTotal) : null;
+  const withCost = rows.filter((r) => isNum(r.cost) && isNum(r.value));
+  const invested = withCost.reduce((a, r) => a + r.cost, 0);
+  const gainTotal = withCost.reduce((a, r) => a + r.gain, 0);
+  const gainPct = invested > 0 ? gainTotal / invested : null;
+  const noCost = rows.filter((r) => r.s && !isNum(r.cost)).length;
+  const isPerf = pfUi.view === 'perf';
+
+  document.querySelectorAll('#pfViews [data-pfview]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.pfview === pfUi.view)));
+  $('#pfViews').hidden = !rows.length;
+
   const wavg = (key) => {
     let num = 0, den = 0;
     rows.forEach((r) => { if (r.s && isNum(r.s[key]) && r.value) { num += r.s[key] * r.value; den += r.value; } });
-    return den ? { v: num / den, share: total ? den / total : 0 } : null;
+    return den ? num / den : null;
   };
-  const score = wavg('score'), r52 = wavg('r52'), rel52 = wavg('rel52');
+  const ranked = withCost.filter((r) => isNum(r.pct)).sort((a, b) => b.pct - a.pct);
+  const best = ranked[0], worst = ranked[ranked.length - 1];
+  const warnCount = rows.filter((r) => r.s && weakSignals(r.s).length).length;
   const etfShare = total ? rows.filter((r) => r.s && r.s.type === 'ETF').reduce((a, r) => a + (r.value || 0), 0) / total : 0;
+
+  const stats = !rows.length ? '' : isPerf
+    ? `<div class="pf-stats">
+        <div><small>Investiert</small><b>${withCost.length ? money(invested, 0) : '–'}</b></div>
+        <div><small>Positionen</small><b>${rows.length}</b></div>
+        <div><small>Beste Position</small><b>${best ? `${esc(shortName(best.s))} <span class="up">${pct(best.pct, 0, true)}</span>` : '–'}</b></div>
+        <div><small>Schwächste Position</small><b>${worst && worst !== best ? `${esc(shortName(worst.s))} <span class="${perfCls(worst.pct)}">${pct(worst.pct, 0, true)}</span>` : '–'}</b></div>
+      </div>
+      ${noCost ? `<p class="pf-miss">${noCost} ${noCost === 1 ? 'Position hat' : 'Positionen haben'} noch keine Kaufdaten und ${noCost === 1 ? 'fehlt' : 'fehlen'} in der Gesamtentwicklung – tippe bei der Position auf „Kaufdaten ergänzen“.</p>` : ''}`
+    : `<div class="pf-stats">
+        <div title="Wertgewichteter StockRatio-Score der Einzelaktien (ETFs ohne Score)"><small>Ø Score</small><b>${isNum(wavg('score')) ? NF[0].format(wavg('score')) : '–'}</b></div>
+        <div><small>Mit Warnsignalen</small><b class="${warnCount ? 'down' : 'up'}">${warnCount} von ${rows.length}</b></div>
+        <div><small>Ø vs. S&amp;P 500</small><b>${isNum(wavg('rel52')) ? pct(wavg('rel52'), 1, true, true) : '–'}</b></div>
+        <div><small>Anteil ETFs</small><b>${pct(etfShare, 0)}</b></div>
+      </div>`;
 
   $('#pfSummary').innerHTML = `
     <div class="pf-top">
@@ -1198,47 +1323,89 @@ function renderPortfolio() {
         ${['EUR', 'USD'].map((c) => `<button data-cur="${c}" aria-selected="${PF.cur === c}">${CUR_SIGN[c]} ${c}</button>`).join('')}
       </div>
     </div>
-    <div class="pf-value">${rows.length ? money(total) : money(0)}</div>
-    <div class="pf-day">${rows.length && isNum(dayPct)
-      ? `<span class="${dayTotal >= 0 ? 'up' : 'down'}">${dayTotal >= 0 ? '+' : ''}${money(dayTotal)} (${pct(dayPct, 2, true)})</span> heute`
-      : '<span class="muted">Noch keine Positionen</span>'}</div>
-    ${rows.length ? `<div class="pf-stats">
-      <div><small>Positionen</small><b>${rows.length}</b></div>
-      <div title="Wertgewichteter StockRatio-Score der Einzelaktien (ETFs ohne Score)"><small>Ø Score</small><b>${score ? NF[0].format(score.v) : '–'}</b></div>
-      <div><small>Ø Perf. 52 W</small><b>${r52 ? pct(r52.v, 1, true, true) : '–'}</b></div>
-      <div><small>Ø vs. S&amp;P 500</small><b>${rel52 ? pct(rel52.v, 1, true, true) : '–'}</b></div>
-      <div><small>Anteil ETFs</small><b>${pct(etfShare, 0)}</b></div>
-    </div>
-    ${levelsSummaryHtml(rows)}` : ''}`;
+    <div class="pf-value">${money(total)}</div>
+    ${rows.length ? `<div class="pf-perf">
+        <div><small>Seit Kauf</small><b class="${perfCls(gainTotal)}">${withCost.length ? `${signed(gainTotal)} <span>${pct(gainPct, 2, true)}</span>` : '–'}</b></div>
+        <div><small>Heute</small><b class="${perfCls(dayTotal)}">${isNum(dayPct) ? `${signed(dayTotal)} <span>${pct(dayPct, 2, true)}</span>` : '–'}</b></div>
+      </div>` : '<div class="pf-day"><span class="muted">Noch keine Positionen</span></div>'}
+    ${stats}`;
 
-  $('#pfList').innerHTML = rows.length ? rows.map(({ p, s, value, day }) => {
-    const w = total && value ? value / total : 0;
-    if (!s) {
-      return `<div class="pf-row missing"><div class="pf-name"><span class="nm">${esc(p.s)}</span>
-        <span class="tk">Nicht mehr in den Daten – in watchlist.txt eintragen</span></div>
-        <div class="pf-act"><button class="icon-btn" data-del="${esc(p.s)}" aria-label="Entfernen">✕</button></div></div>`;
-    }
-    const scoreHtml = isNum(s.score)
-      ? `<span class="pill lv-${s.label}"><span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span></span>`
-      : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : NA;
-    return `<div class="pf-row" data-sym="${esc(s.s)}" tabindex="0">
-      <div class="pf-name">${logoHtml(s)}<div class="nm-wrap"><span class="nm">${esc(s.n)}</span>
-        <span class="tk">${esc(s.s)} · ${fmtShares(p.shares)} Stk. · ${priceFmt(s)}</span></div></div>
-      <div class="pf-val"><b>${money(value)}</b><span>${pct(s.d1, 1, true, true)}${isNum(day) ? ` <span class="muted">(${day >= 0 ? '+' : ''}${money(day)})</span>` : ''}</span></div>
-      <div class="pf-w"><span class="bar"><i style="width:${(w * 100).toFixed(1)}%"></i></span><span>${pct(w, 1)}</span></div>
-      <div class="pf-score">${scoreHtml}</div>
-      <div class="pf-act">
-        <button class="icon-btn" data-edit="${esc(s.s)}" aria-label="Bearbeiten" title="Bearbeiten">✎</button>
-        <button class="icon-btn" data-del="${esc(s.s)}" aria-label="Entfernen" title="Entfernen">✕</button>
-      </div>
-      ${levelRowHtml(p, s)}
-    </div>`;
-  }).join('') : `<div class="pf-empty card">
+  $('#pfList').hidden = !isPerf && rows.length > 0;
+  $('#pfScan').hidden = isPerf || !rows.length;
+
+  if (!rows.length) {
+    $('#pfList').innerHTML = `<div class="pf-empty card">
       <b>Dein Portfolio ist noch leer.</b>
-      <p class="muted">Suche unten eine Aktie oder einen ETF, gib den Wert (oder die Stückzahl) ein, die du besitzt, und tippe auf „Hinzufügen“.
+      <p class="muted">Suche unten eine Aktie oder einen ETF, gib Kaufbetrag (oder Stückzahl), Kaufdatum und Kaufkurs ein und tippe auf „Hinzufügen“.
       Deine Favoriten kannst du direkt antippen.</p></div>`;
-
+  } else if (isPerf) {
+    $('#pfList').innerHTML = rows.map((r) => perfRowHtml(r, total)).join('') + `<div class="card pf-levels">${levelsSummaryHtml(rows)}</div>`;
+  } else {
+    renderPfScan();
+  }
   renderPfForm();
+}
+
+function perfRowHtml({ p, s, value, gain, pct: pc }, total) {
+  if (!s) {
+    return `<div class="pf-row missing"><div class="pf-name"><div class="nm-wrap"><span class="nm">${esc(p.s)}</span>
+      <span class="tk">Nicht mehr in den Daten – in watchlist.txt eintragen</span></div></div>
+      <div class="pf-act"><button class="icon-btn" data-del="${esc(p.s)}" aria-label="Entfernen">✕</button></div></div>`;
+  }
+  const w = total && value ? value / total : 0;
+  const since = p.buyDate ? `<span class="tk pf-date">Kauf ${dateDe(p.buyDate)}<span class="pf-hold"> · ${holdFor(p.buyDate)}</span></span>` : '';
+  const perf = isNum(pc)
+    ? `<span class="pf-gain ${perfCls(gain)}"><b>${pct(pc, 1, true)}</b> ${signed(gain)}</span>`
+    : `<button class="link-btn" data-edit="${esc(s.s)}">Kaufdaten ergänzen</button>`;
+  return `<div class="pf-row" data-sym="${esc(s.s)}" tabindex="0">
+    <div class="pf-name">${logoHtml(s)}<div class="nm-wrap"><span class="nm">${esc(s.n)}</span>
+      <span class="tk">${fmtShares(p.shares)} Stk.<span class="pf-pxi"> · ${priceFmt(s)}</span></span>${since}</div></div>
+    <div class="pf-val"><b>${money(value)}</b>${perf}<span class="pf-wt">${pct(w, 0)} des Portfolios</span></div>
+    <div class="pf-act"><button class="icon-btn" data-edit="${esc(s.s)}" aria-label="Bearbeiten" title="Bearbeiten">✎</button></div>
+    ${levelRowHtml(p, s)}
+  </div>`;
+}
+
+function renderPfScan() {
+  const view = currentView();
+  $('#pfMetricViews').innerHTML = VIEWS.map(([id, label, , short]) =>
+    `<button role="tab" data-pfmetric="${id}" aria-selected="${state.view === id}"><span class="long">${label}</span><span class="short">${short || label}</span></button>`).join('');
+  const cur = sortId(pfUi.sort.key, pfUi.sort.dir);
+  const opts = PF_SORTS.map(([k, d, l]) => [sortId(k, d), l]);
+  if (!opts.some(([id]) => id === cur) && COLUMNS[pfUi.sort.key]) opts.push([cur, `${COLUMNS[pfUi.sort.key].label} ${pfUi.sort.dir === 1 ? '↑' : '↓'}`]);
+  $('#pfSortSel').innerHTML = opts.map(([id, l]) => `<option value="${id}" ${id === cur ? 'selected' : ''}>${esc(l)}</option>`).join('');
+
+  const stocks = sortRows(PF.positions.map((p) => BYSYM[p.s]).filter(Boolean), pfUi.sort);
+  const warn = stocks.filter((s) => weakSignals(s).length).length;
+  $('#pfScanCount').textContent = `${stocks.length} Positionen${warn ? ` · ${warn} mit ⚠` : ''}`;
+
+  if (isMobile()) {
+    $('#pfTable tbody').innerHTML = '';
+    $('#pfCards').innerHTML = stocks.map((s) => cardHtml(s, pfCardExtra(s))).join('');
+  } else {
+    $('#pfCards').innerHTML = '';
+    const cols = ['name', 'warn', 'pfVal', 'pfPct', ...view[2].filter((k) => k !== 'name')];
+    $('#pfTable thead').innerHTML = headHtml(cols, pfUi.sort);
+    $('#pfTable tbody').innerHTML = stocks.map((s) =>
+      `<tr data-sym="${esc(s.s)}" tabindex="0" class="${weakSignals(s).length >= 2 ? 'row-warn' : ''}">${cols.map((k) => `<td class="${COLUMNS[k].cls || ''}">${COLUMNS[k].render(s)}</td>`).join('')}</tr>`).join('');
+  }
+}
+
+function pfCardExtra(s) {
+  const p = posOf(s.s);
+  const r = p ? posPerf(p) : {};
+  const w = weakSignals(s);
+  const trend = p && isNum(p.refScore) && isNum(s.score) && p.refScore !== s.score
+    ? ` · Score ${p.buyDate && p.refDate === p.buyDate ? 'seit Kauf' : `seit ${dateDe(p.refDate)}`} <b class="${s.score > p.refScore ? 'up' : 'down'}">${NF[0].format(p.refScore)} → ${NF[0].format(s.score)}</b>`
+    : '';
+  return `<div class="sc-pos">Position <b>${money(r.value, 0)}</b>${isNum(r.pct) ? ` <span class="${perfCls(r.pct)}">${pct(r.pct, 1, true)}</span>` : ''}${trend}</div>
+    <div class="sc-warn">${w.length ? w.map((t) => `<span class="wchip">⚠ ${esc(t)}</span>`).join('') : '<span class="okchip">✓ Keine Warnsignale</span>'}</div>`;
+}
+
+function setPfView(v) {
+  pfUi.view = v === 'scan' ? 'scan' : 'perf';
+  store.set(PFVIEW_KEY, pfUi.view);
+  renderPortfolio();
 }
 
 function renderPfForm() {
@@ -1250,81 +1417,141 @@ function renderPfForm() {
   const s = pf.sel ? BYSYM[pf.sel] : null;
   $('#pfSelected').hidden = !s;
   $('#pfSelected').innerHTML = s
-    ? `<div><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''} · ${priceFmt(s)}${PF.cur !== majorOf(s.cur) && isNum(priceIn(s)) ? ` ≈ ${money(priceIn(s))}` : ''}</span></div>
+    ? `<div class="sg-name">${logoHtml(s, 'sm')}<div><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''} · aktuell ${priceFmt(s)}${PF.cur !== majorOf(s.cur) && isNum(priceIn(s)) ? ` ≈ ${money(priceIn(s))}` : ''}</span></div></div>
        ${pf.editing ? '' : '<button class="icon-btn" id="pfClear" aria-label="Auswahl entfernen">✕</button>'}`
     : '';
   $('#pfFormTitle').textContent = pf.editing ? 'Position bearbeiten' : 'Position hinzufügen';
   $('#pfSave').textContent = pf.editing ? 'Speichern' : 'Hinzufügen';
   $('#pfCancel').hidden = !pf.editing;
+  $('#pfDelete').hidden = !pf.editing;
   $('#pfSearch').parentElement.hidden = !!pf.editing;
-  const modeSel = $('#pfMode');
-  modeSel.options[0].textContent = `Wert in ${CUR_SIGN[PF.cur]}`;
+  $('#pfMode').options[0].textContent = `Kaufbetrag in ${CUR_SIGN[PF.cur]}`;
+  $('#pfAmountLabel').textContent = $('#pfMode').value === 'shares' ? 'Stückzahl' : `Betrag (${CUR_SIGN[PF.cur]})`;
+  $('#pfAmount').placeholder = $('#pfMode').value === 'shares' ? 'z. B. 12,5' : 'z. B. 2.500';
+  $('#pfPxLabel').textContent = `Kaufkurs je Aktie${s ? ` (${s.cur})` : ''}`;
+  $('#pfPx').placeholder = s && isNum(s.px) ? `aktuell ${NF[s.px >= 1000 ? 0 : 2].format(s.px)}` : 'aktueller Kurs';
+  $('#pfDate').max = todayIso();
+  pf.lastMode = $('#pfMode').value;
   updatePfHint();
 }
 
 const majorOf = (cur) => (MINOR_CUR[cur] || [cur])[0];
 const shortName = (s) => (s.n || s.s).replace(/,? (Inc\.?|Corporation|Corp\.?|Holdings?|N\.V\.|AG|SE|plc|Ltd\.?|Limited|S\.A\.)$/i, '').slice(0, 28);
 
-function updatePfHint() {
+// reads the form: shares, average buy price (stock currency), date and cost in EUR + USD
+function pfInputs() {
   const s = pf.sel ? BYSYM[pf.sel] : null;
   const amount = parseAmount($('#pfAmount').value);
-  const mode = $('#pfMode').value;
-  const price = s ? priceIn(s) : null;
+  const pxTyped = parseAmount($('#pfPx').value);
+  const buyPx = pxTyped || (s ? s.px : null);
+  const date = $('#pfDate').value || todayIso();
+  if (!s || !amount || !isNum(buyPx)) return { s, ok: false };
+  const unit = usdPerUnit(s.cur), unitPf = usdPerUnit(PF.cur), eurRate = usdPerUnit('EUR');
+  if (!unit || !unitPf || !eurRate) return { s, ok: false, noFx: true };
+  const shares = $('#pfMode').value === 'shares' ? amount : (amount * unitPf) / (buyPx * unit);
+  const costUsd = shares * buyPx * unit;
+  return { s, ok: true, shares, buyPx, date, pxTyped: !!pxTyped, cost: { USD: costUsd, EUR: costUsd / eurRate } };
+}
+
+function updatePfHint() {
+  const r = pfInputs();
   let hint = '';
-  if (s && amount && price) {
-    hint = mode === 'value'
-      ? `= ${fmtShares(amount / price)} Stück zum aktuellen Kurs`
-      : `= ${money(amount * price)} zum aktuellen Kurs`;
-  } else if (s && !price) {
+  if (r.ok) {
+    const value = r.shares * priceIn(r.s);
+    const cost = r.cost[PF.cur];
+    const g = value - cost;
+    hint = `= ${fmtShares(r.shares)} Stück für ${money(cost)} · heute ${money(value)} (${pct(g / cost, 1, true)})`
+      + (r.pxTyped ? '' : ' · ohne Kaufkurs zählt der aktuelle Kurs');
+  } else if (r.noFx) {
     hint = 'Für diese Währung fehlt ein Wechselkurs – bitte morgen erneut versuchen.';
-  } else if (!s) {
+  } else if (!r.s) {
     hint = 'Wähle zuerst eine Aktie oder einen ETF aus.';
   }
   $('#pfHint').textContent = hint;
-  $('#pfSave').disabled = !(s && amount && price);
+  $('#pfSave').disabled = !r.ok;
 }
 
 function pickForPortfolio(sym) {
   pf.sel = sym;
-  const existing = PF.positions.find((p) => p.s === sym);
+  const existing = posOf(sym);
   if (existing) { startEdit(sym); return; }
   $('#pfSearch').value = '';
   $('#pfSuggest').hidden = true;
+  $('#pfDate').value = todayIso();
+  $('#pfPx').value = '';
   renderPfForm();
   $('#pfAmount').focus();
 }
 
+const decStr = (v, d = 4) => new Intl.NumberFormat('de-DE', { maximumFractionDigits: d, useGrouping: false }).format(v);
+
 function startEdit(sym) {
   if (!BYSYM[sym]) return;
-  const existing = PF.positions.find((p) => p.s === sym);
+  if (state.mode !== 'portfolio') setMode('portfolio');
+  const existing = posOf(sym);
   pf.sel = sym;
   pf.editing = existing ? sym : null;
-  $('#pfMode').value = 'value';
-  $('#pfAmount').value = existing ? new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, useGrouping: false }).format(positionValue(existing) || 0) : '';
+  $('#pfMode').value = existing ? 'shares' : 'cost';
+  $('#pfAmount').value = existing ? decStr(existing.shares) : '';
+  $('#pfDate').value = existing && existing.buyDate ? existing.buyDate : todayIso();
+  $('#pfPx').value = existing && isNum(existing.buyPx) ? decStr(existing.buyPx, existing.buyPx >= 1000 ? 2 : 4) : '';
   renderPfForm();
   $('#pfForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
-  setTimeout(() => $('#pfAmount').focus({ preventScroll: true }), 300);
+  setTimeout(() => $((existing && !isNum(existing.buyPx)) ? '#pfPx' : '#pfAmount').focus({ preventScroll: true }), 300);
 }
 
 function resetPfForm() {
   pf.sel = null; pf.editing = null;
-  $('#pfAmount').value = ''; $('#pfSearch').value = '';
+  $('#pfAmount').value = ''; $('#pfSearch').value = ''; $('#pfPx').value = ''; $('#pfDate').value = '';
+  $('#pfMode').value = 'cost';
   $('#pfSuggest').hidden = true;
   renderPfForm();
 }
 
 function savePosition() {
-  const s = pf.sel ? BYSYM[pf.sel] : null;
-  const amount = parseAmount($('#pfAmount').value);
-  const price = s ? priceIn(s) : null;
-  if (!s || !amount || !price) return;
-  const shares = $('#pfMode').value === 'value' ? amount / price : amount;
-  const existing = PF.positions.find((p) => p.s === s.s);
-  if (existing) existing.shares = shares; else PF.positions.push({ s: s.s, shares });
+  const r = pfInputs();
+  if (!r.ok) return;
+  const { s } = r;
+  const fields = { shares: r.shares, buyPx: r.buyPx, buyDate: r.date, cost: r.cost };
+  const existing = posOf(s.s);
+  if (existing) Object.assign(existing, fields);
+  else PF.positions.push({ s: s.s, ...fields, refScore: isNum(s.score) ? s.score : undefined, refDate: r.date });
   savePF();
   toast(existing ? `${shortName(s)} aktualisiert` : `${shortName(s)} hinzugefügt`);
   resetPfForm();
   renderPortfolio();
+}
+
+function deletePosition(sym) {
+  const s = BYSYM[sym];
+  if (!confirm(`${s ? s.n : sym} aus dem Portfolio entfernen?`)) return;
+  PF.positions = PF.positions.filter((p) => p.s !== sym);
+  savePF();
+  if (pf.editing === sym) resetPfForm();
+  renderPortfolio();
+}
+
+// adds a purchase to the portfolio (Kaufplan) – merges into an existing position with an average price
+function addPurchase(sym, shares, px, date, cost) {
+  const s = BYSYM[sym];
+  const existing = posOf(sym);
+  if (!existing) {
+    PF.positions.push({ s: sym, shares, buyPx: px, buyDate: date, cost, refScore: s && isNum(s.score) ? s.score : undefined, refDate: date });
+    return;
+  }
+  const hadData = isNum(existing.buyPx);
+  const total = existing.shares + shares;
+  if (hadData) {
+    const oldCost = existing.cost || { EUR: null, USD: null };
+    existing.buyPx = (existing.shares * existing.buyPx + shares * px) / total;
+    existing.cost = {
+      EUR: isNum(oldCost.EUR) ? oldCost.EUR + cost.EUR : null,
+      USD: isNum(oldCost.USD) ? oldCost.USD + cost.USD : null,
+    };
+    if (!isNum(existing.cost.EUR)) delete existing.cost;
+    if (!existing.buyDate || date < existing.buyDate) existing.buyDate = date;
+  }
+  existing.shares = total;
 }
 
 function suggest(query) {
@@ -1359,6 +1586,34 @@ function bindPortfolio() {
     savePF();
     renderPortfolio();
   });
+  $('#pfViews').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pfview]');
+    if (b) setPfView(b.dataset.pfview);
+  });
+  $('#pfMetricViews').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-pfmetric]');
+    if (!b) return;
+    state.view = b.dataset.pfmetric;
+    renderPfScan();
+    writeHash();
+  });
+  $('#pfSortSel').addEventListener('change', (e) => {
+    const v = e.target.value, key = v.slice(0, -1);
+    if (COLUMNS[key]) pfUi.sort = { key, dir: v.endsWith('+') ? 1 : -1 };
+    renderPfScan();
+  });
+  $('#pfTable thead').addEventListener('click', (e) => {
+    const th = e.target.closest('th[data-sort]');
+    if (!th) return;
+    const key = th.dataset.sort;
+    if (pfUi.sort.key === key) pfUi.sort.dir *= -1;
+    else pfUi.sort = { key, dir: COLUMNS[key].dir || -1 };
+    renderPfScan();
+  });
+  $('#pfDelete').addEventListener('click', () => { if (pf.editing) deletePosition(pf.editing); });
+  $('#pfDate').addEventListener('change', updatePfHint);
+  $('#pfPx').addEventListener('input', updatePfHint);
+  $('#pfPx').addEventListener('keydown', (e) => { if (e.key === 'Enter') savePosition(); });
   let t;
   $('#pfSearch').addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => suggest(e.target.value), 80); });
   $('#pfSearch').addEventListener('keydown', (e) => {
@@ -1373,26 +1628,31 @@ function bindPortfolio() {
     const edit = e.target.closest('[data-edit]');
     if (edit) { startEdit(edit.dataset.edit); return; }
     const del = e.target.closest('[data-del]');
-    if (del) {
-      const s = BYSYM[del.dataset.del];
-      if (confirm(`${s ? s.n : del.dataset.del} aus dem Portfolio entfernen?`)) {
-        PF.positions = PF.positions.filter((p) => p.s !== del.dataset.del);
-        savePF();
-        if (pf.editing === del.dataset.del) resetPfForm();
-        renderPortfolio();
-      }
+    if (del) { deletePosition(del.dataset.del); return; }
+    const fav = e.target.closest('#pfScan [data-fav]');
+    if (fav) {
+      toggleFav(fav.dataset.fav);
+      renderPresets();
       return;
     }
-    const row = e.target.closest('.pf-row[data-sym]');
+    const row = e.target.closest('.pf-row[data-sym], #pfScan [data-sym]');
     if (row) openDetail(row.dataset.sym);
   });
-  $('#pfList').addEventListener('keydown', (e) => {
-    const row = e.target.closest('.pf-row[data-sym]');
+  $('#portfolioView').addEventListener('keydown', (e) => {
+    const row = e.target.closest('.pf-row[data-sym], #pfScan .scard[data-sym], #pfScan tr[data-sym]');
     if (row && e.key === 'Enter') openDetail(row.dataset.sym);
   });
   $('#pfAmount').addEventListener('input', updatePfHint);
   $('#pfAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') savePosition(); });
-  $('#pfMode').addEventListener('change', updatePfHint);
+  $('#pfMode').addEventListener('change', () => {
+    // keep the meaning: convert the number (computed with the previous mode) when switching amount <-> shares
+    const now = $('#pfMode').value;
+    $('#pfMode').value = pf.lastMode || 'cost';
+    const r = pfInputs();
+    $('#pfMode').value = now;
+    if (r.ok) $('#pfAmount').value = now === 'shares' ? decStr(r.shares, 6) : decStr(r.cost[PF.cur], 2);
+    renderPfForm();
+  });
   $('#pfSave').addEventListener('click', savePosition);
   $('#pfCancel').addEventListener('click', resetPfForm);
   $('#pfTransfer').addEventListener('click', shareTransferLink);
@@ -1712,10 +1972,9 @@ function commitPlan() {
   if (!confirm(msg)) return;
   bought.forEach((i) => {
     setLevel(i.s);
-    const shares = i.inv / priceIn(BYSYM[i.s], 'EUR');
-    const existing = PF.positions.find((p) => p.s === i.s);
-    if (existing) existing.shares += shares;
-    else PF.positions.push({ s: i.s, shares });
+    const st = BYSYM[i.s];
+    const shares = i.inv / priceIn(st, 'EUR');
+    addPurchase(i.s, shares, st.px, todayIso(), { EUR: i.inv, USD: i.inv * usdPerUnit('EUR') });
   });
   savePF();
   saveLevels();

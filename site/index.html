@@ -167,8 +167,32 @@
     </div>
 
     <section id="portfolioView" class="portfolio" hidden aria-label="Mein Portfolio">
+      <div class="seg pf-views" id="pfViews" role="tablist" aria-label="Portfolio-Ansicht">
+        <button role="tab" data-pfview="perf" aria-selected="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/></svg>Wertentwicklung</button>
+        <button role="tab" data-pfview="scan" aria-selected="false">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>Analyse</button>
+      </div>
       <div class="pf-summary card" id="pfSummary"></div>
       <div class="pf-list" id="pfList"></div>
+
+      <div class="pf-scan" id="pfScan" hidden>
+        <section class="view-bar">
+          <div class="seg" id="pfMetricViews" role="tablist" aria-label="Kennzahlen"></div>
+          <div class="view-right">
+            <div class="result-count" id="pfScanCount"></div>
+            <label class="sort-ctl">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4v16M3 16l4 4 4-4M17 20V4M13 8l4-4 4 4"/></svg>
+              <span class="sr-only">Sortieren</span>
+              <select id="pfSortSel" aria-label="Sortieren"></select>
+            </label>
+          </div>
+        </section>
+        <div class="table-wrap pf-table-wrap">
+          <table id="pfTable"><thead></thead><tbody></tbody></table>
+        </div>
+        <div class="cards" id="pfCards"></div>
+      </div>
 
       <div class="card pf-form" id="pfForm">
         <h3 id="pfFormTitle">Position hinzufügen</h3>
@@ -180,10 +204,13 @@
         <div class="pf-quick" id="pfQuick"></div>
         <div class="pf-selected" id="pfSelected" hidden></div>
         <div class="pf-amount">
-          <label class="pf-amt"><span>Betrag</span><input id="pfAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 2.500"></label>
           <label class="pf-mode"><span>Eingabe als</span>
-            <select id="pfMode"><option value="value">Wert in €</option><option value="shares">Stückzahl</option></select></label>
+            <select id="pfMode"><option value="cost">Kaufbetrag in €</option><option value="shares">Stückzahl</option></select></label>
+          <label class="pf-amt"><span id="pfAmountLabel">Betrag</span><input id="pfAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 2.500"></label>
+          <label class="pf-date"><span>Gekauft am</span><input id="pfDate" type="date"></label>
+          <label class="pf-px"><span id="pfPxLabel">Kaufkurs je Aktie</span><input id="pfPx" type="text" inputmode="decimal" autocomplete="off" placeholder="aktueller Kurs"></label>
           <div class="pf-btns">
+            <button class="btn ghost danger" id="pfDelete" hidden>Entfernen</button>
             <button class="btn ghost" id="pfCancel" hidden>Abbrechen</button>
             <button class="btn primary" id="pfSave" disabled>Hinzufügen</button>
           </div>
