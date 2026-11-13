@@ -1,6 +1,6 @@
 symbol,name,isin,country,sp500,msci,watchlist,msci_weight
 AAPL,Apple Inc.,US0378331005,United States,True,True,False,5.8026
-NVDA,NVIDIA Corporation,US67066G1040,United States,True,True,False,4.2537
+NVDA,NVIDIA Corporation,US67066G1040,United States,True,True,True,4.2537
 MSFT,Microsoft Corporation,US5949181045,United States,True,True,False,4.1047
 AMZN,Amazon.com Inc.,US0231351067,United States,True,True,False,2.8827
 GOOGL,Alphabet Inc. Class A,US02079K3059,United States,True,True,False,1.9558
@@ -16,7 +16,7 @@ BRK-B,Berkshire Hathaway Inc. Class B,US0846707026,United States,True,True,False
 XOM,Exxonmobil Holdings Corporation,US30233Q1085,United States,True,True,False,0.7881
 V,Visa Inc. Class A,US92826C8394,United States,True,True,False,0.7784
 JNJ,Johnson & Johnson,US4781601046,United States,True,True,False,0.7579
-ASML.AS,ASML Holding NV,NL0010273215,Netherlands,False,True,False,0.6511
+ASML.AS,ASML Holding NV,NL0010273215,Netherlands,False,True,True,0.6511
 WMT,Walmart Inc.,US9311421039,United States,True,True,False,0.607
 MA,Mastercard Incorporated Class A,US57636Q1040,United States,True,True,False,0.5892
 ABBV,AbbVie Inc.,US00287Y1091,United States,True,True,False,0.5783
@@ -124,7 +124,7 @@ UCG.MI,UniCredit S.p.A.,IT0005239360,Italy,False,True,False,0.1443
 ABBN.SW,ABB Ltd.,CH0012221716,Switzerland,False,True,False,0.1442
 LMT,Lockheed Martin Corporation,US5398301094,United States,True,True,False,0.144
 MDT,Medtronic Plc,IE00BTN1Y115,United States,True,True,False,0.144
-NOVO-B.CO,Novo Nordisk A/S Class B,DK0062498333,Denmark,False,True,True,0.1433
+NOVO-B.CO,Novo Nordisk A/S Class B,DK0062498333,Denmark,False,True,False,0.1433
 PGR,Progressive Corporation,US7433151039,United States,True,True,False,0.1425
 8035.T,Tokyo Electron Ltd.,JP3571400005,Japan,False,True,False,0.1411
 MO,Altria Group Inc.,US02209S1033,United States,True,True,False,0.1405
@@ -563,7 +563,7 @@ EQT,EQT Corporation,US26884L1098,United States,True,True,False,0.0332
 DTE,DTE Energy Company,US2333311072,United States,True,True,False,0.0331
 EXPE,Expedia Group Inc.,US30212P3038,United States,True,True,False,0.0331
 JBL,Jabil Inc.,US4663131039,United States,True,True,False,0.0331
-MSTR,Strategy Inc Class A,US5949724083,United States,False,True,False,0.0329
+MSTR,Strategy Inc Class A,US5949724083,United States,False,True,True,0.0329
 PHIA.AS,Koninklijke Philips N.V.,NL0000009538,Netherlands,False,True,False,0.0329
 3382.T,Seven & I Holdings Co. Ltd.,JP3422950000,Japan,False,True,False,0.0328
 5108.T,Bridgestone Corporation,JP3830800003,Japan,False,True,False,0.0328
@@ -1146,7 +1146,7 @@ ASX.AX,ASX Limited,AU000000ASX7,Australia,False,True,False,0.0048
 DSCT.TA,Israel Discount Bank Limited Class A,IL0006912120,Israel,False,True,False,0.0048
 9107.T,Kawasaki Kisen Kaisha Ltd.,JP3223800008,Japan,False,True,False,0.0047
 FUTU,Futu Holdings Ltd. Sponsored ADR Class A,US36118L1061,Hong Kong,False,True,False,0.0046
-HAG.DE,HENSOLDT AG,DE000HAG0005,Germany,False,True,True,0.0046
+HAG.DE,HENSOLDT AG,DE000HAG0005,Germany,False,True,False,0.0046
 BZU.MI,Buzzi Spa,IT0001347308,Italy,False,True,False,0.0045
 EMP-A.TO,Empire Co Ltd Class A,CA2918434077,Canada,False,True,False,0.0045
 7911.T,TOPPAN Holdings Inc.,JP3629000005,Japan,False,True,False,0.0044
@@ -1243,7 +1243,6 @@ APA,APA Corporation,,United States,True,False,False,
 APTV,Aptiv,,United States,True,False,False,
 ARE,Alexandria Real Estate Equities,,United States,True,False,False,
 AVY,Avery Dennison,,United States,True,False,False,
-BABA,,,,False,False,True,
 BAX,Baxter International,,United States,True,False,False,
 BEN,Franklin Resources,,United States,True,False,False,
 BF-B,Brown–Forman,,United States,True,False,False,
@@ -1256,6 +1255,7 @@ DOC,Healthpeak Properties,,United States,True,False,False,
 DPZ,Domino's,,United States,True,False,False,
 DVA,DaVita,,United States,True,False,False,
 ERIE,Erie Indemnity,,United States,True,False,False,
+EUNL.DE,,,,False,False,True,
 FDS,FactSet,,United States,True,False,False,
 FRT,Federal Realty Investment Trust,,United States,True,False,False,
 GDDY,GoDaddy,,United States,True,False,False,
@@ -1273,15 +1273,16 @@ LULU,Lululemon Athletica,,United States,True,False,False,
 LUV,Southwest Airlines,,United States,True,False,False,
 MGM,MGM Resorts,,United States,True,False,False,
 MOS,Mosaic Company (The),,United States,True,False,False,
+MP,,,,False,False,True,
 MRNA,Moderna,,United States,True,False,False,
 NCLH,Norwegian Cruise Line Holdings,,United States,True,False,False,
-NU,,,,False,False,True,
 NWS,News Corp (Class B),,United States,True,False,False,
 PNR,Pentair,,United States,True,False,False,
 PNW,Pinnacle West Capital,,United States,True,False,False,
 PODD,Insulet Corporation,,United States,True,False,False,
 RL,Ralph Lauren Corporation,,United States,True,False,False,
 RVTY,Revvity,,United States,True,False,False,
+SEC0.DE,,,,False,False,True,
 SJM,J.M. Smucker Company (The),,United States,True,False,False,
 SKYD,Skydance,,United States,True,False,False,
 SOLV,Solventum,,United States,True,False,False,
@@ -1289,7 +1290,6 @@ SWK,Stanley Black & Decker,,United States,True,False,False,
 TECH,Bio-Techne,,United States,True,False,False,
 TKO,TKO Group Holdings,,United States,True,False,False,
 TRMB,Trimble Inc.,,United States,True,False,False,
-TSM,,,,False,False,True,
 TYL,Tyler Technologies,,United States,True,False,False,
 UDR,"UDR, Inc.",,United States,True,False,False,
 UHS,Universal Health Services,,United States,True,False,False,

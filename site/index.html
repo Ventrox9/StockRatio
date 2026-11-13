@@ -23,6 +23,14 @@
   </header>
 
   <main class="wrap">
+    <nav class="modes" id="modes" role="tablist" aria-label="Bereich">
+      <button role="tab" data-mode="screener" aria-selected="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h10"/></svg>Screener</button>
+      <button role="tab" data-mode="portfolio" aria-selected="false">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 8h16v11H4zM9 8V5h6v3"/></svg>Mein Portfolio</button>
+    </nav>
+
+    <div id="screenerView">
     <section class="controls" aria-label="Filter">
       <div class="row search-row">
         <label class="search">
@@ -49,8 +57,8 @@
             <option value="">Alle</option>
             <option value="SP500">S&amp;P 500</option>
             <option value="MSCI">MSCI World</option>
-            <option value="WL">Watchlist (Repo)</option>
             <option value="FAV">Meine Favoriten ★</option>
+            <option value="ETF">Nur ETFs</option>
           </select>
         </label>
         <label>Land / Region <select data-f="region" id="regionSel"><option value="">Alle</option></select></label>
@@ -122,6 +130,39 @@
     <div class="empty mob-empty" id="emptyCards" hidden>Keine Aktie erfüllt alle Filter. Lockere die Kriterien oder setze sie zurück.</div>
     <button class="btn more" id="more" hidden>Mehr anzeigen</button>
     <nav class="pager" id="pager" aria-label="Seiten"></nav>
+    </div>
+
+    <section id="portfolioView" class="portfolio" hidden aria-label="Mein Portfolio">
+      <div class="pf-summary card" id="pfSummary"></div>
+      <div class="pf-list" id="pfList"></div>
+
+      <div class="card pf-form" id="pfForm">
+        <h3 id="pfFormTitle">Position hinzufügen</h3>
+        <div class="pf-search">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
+          <input id="pfSearch" type="search" autocomplete="off" placeholder="Aktie oder ETF suchen (Name, Ticker, ISIN) …">
+          <ul class="suggest" id="pfSuggest" role="listbox" hidden></ul>
+        </div>
+        <div class="pf-quick" id="pfQuick"></div>
+        <div class="pf-selected" id="pfSelected" hidden></div>
+        <div class="pf-amount">
+          <label class="pf-amt"><span>Betrag</span><input id="pfAmount" type="text" inputmode="decimal" autocomplete="off" placeholder="z. B. 2.500"></label>
+          <label class="pf-mode"><span>Eingabe als</span>
+            <select id="pfMode"><option value="value">Wert in €</option><option value="shares">Stückzahl</option></select></label>
+          <div class="pf-btns">
+            <button class="btn ghost" id="pfCancel" hidden>Abbrechen</button>
+            <button class="btn primary" id="pfSave" disabled>Hinzufügen</button>
+          </div>
+        </div>
+        <p class="pf-hint" id="pfHint"></p>
+      </div>
+
+      <div class="pf-note">
+        <p>Dein Portfolio und deine Favoriten werden nur <b>in diesem Browser</b> gespeichert – nicht im Internet und nicht im Repository.
+          Den Wert rechnet die Seite täglich mit den aktuellen Kursen hoch.</p>
+        <button class="btn" id="pfTransfer">Auf anderes Gerät übertragen</button>
+      </div>
+    </section>
 
     <section class="explain" id="erklaerung">
       <h2>So liest du die Tabelle</h2>
@@ -130,7 +171,9 @@
           <summary>StockRatio-Score &amp; Signal</summary>
           <p>Der Score (0–100) fasst fünf Säulen zusammen. Jede Kennzahl wird als Perzentil gegen alle Aktien im Screener gerechnet (100 = bester Wert); Bewertung und Verschuldung werden zusätzlich mit der eigenen Branche verglichen, weil ein KGV von 25 für Software günstig, für eine Bank aber teuer ist.</p>
           <ul class="weights" id="weightsList"></ul>
-          <p><b>Signal:</b> ≥ 70 Kaufkandidat · 58–69 Positiv · 43–57 Neutral · 30–42 Negativ · &lt; 30 Meiden.</p>
+          <p>Der Score ist ein <b>Perzentil</b>: 80 bedeutet „attraktiver als 80 % aller Aktien im Screener“.</p>
+          <p><b>Signal:</b> ≥ 90 Kaufkandidat · 70–89 Positiv · 30–69 Neutral · 10–29 Negativ · &lt; 10 Meiden.</p>
+          <p>ETFs erhalten keinen Score – KGV, Analysten &amp; Co. beziehen sich auf einzelne Unternehmen.</p>
         </details>
         <details>
           <summary>Bewertung: KGV, Forward-KGV, PEG</summary>

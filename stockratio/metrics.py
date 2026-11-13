@@ -100,6 +100,9 @@ def extract(symbol: str, qs: dict, fx_to_usd: dict[str, float]) -> dict:
 
     return {
         "s": symbol,
+        "type": "ETF" if price.get("quoteType") == "ETF" else None,
+        "aum": _round(_num(sd.get("totalAssets")) * fx / 1e9, 2)
+        if (price.get("quoteType") == "ETF" and _num(sd.get("totalAssets")) and fx) else None,
         "n": price.get("longName") or price.get("shortName") or symbol,
         "ex": price.get("exchangeName"),
         "cur": currency,

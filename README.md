@@ -28,7 +28,7 @@ aktualisiert und auf **GitHub Pages** veröffentlicht. Es gibt keinen Server und
 4. Der Analysten-Konsens wird bei wenigen Analysten Richtung „neutral“ gedämpft.
 5. Die fünf Säulen werden gewichtet und das Ergebnis erneut in ein Perzentil umgerechnet:
    **Score 80 = attraktiver als 80 % aller Aktien im Screener.**
-   Signal: ≥ 90 Kaufkandidat · ≥ 70 Positiv · ≥ 30 Neutral · ≥ 10 Negativ · darunter Meiden.
+   Signal: ≥ 90 Kaufkandidat · ≥ 70 Positiv · ≥ 30 Neutral · ≥ 10 Negativ · darunter Meiden. ETFs erhalten keinen Score.
 
 Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprognose und keine Anlageberatung.
 
@@ -42,12 +42,18 @@ Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprog
 
 > Der Workflow veröffentlicht nur vom **Standard-Branch** des Repositories.
 
-## Eigene Watchlist
+## Favoriten, Portfolio & Watchlist
 
-Trage in [`watchlist.txt`](watchlist.txt) beliebige Yahoo-Finance-Ticker ein (ein Ticker pro Zeile,
-z. B. `RHM.DE`, `NOVO-B.CO`, `TSM`). Nach dem Commit läuft der Workflow automatisch und die Aktien
-erscheinen auf der Seite unter „★ Watchlist“. Zusätzlich kannst du direkt auf der Webseite Aktien mit ★
-als Favorit markieren (wird nur in deinem Browser gespeichert).
+- **Favoriten (★):** Mit dem Stern an jeder Aktie an- und abwählen; „★ Favoriten“ zeigt nur diese.
+  Beim allerersten Besuch sind die Werte aus [`watchlist.txt`](watchlist.txt) vorausgewählt.
+- **Mein Portfolio:** Eigene Positionen mit Wert (in € oder $) oder Stückzahl erfassen. Die Seite rechnet den
+  Wert täglich mit den aktuellen Kursen hoch und zeigt Tagesänderung, Gewichtung, Ø Score und Performance
+  vs. S&P 500. Anzeige umschaltbar zwischen **€ und $**.
+- Favoriten und Portfolio werden **nur im Browser** gespeichert (nicht im Repository). Mit
+  „Auf anderes Gerät übertragen“ entsteht ein Link, der beides auf ein anderes Gerät kopiert.
+- **watchlist.txt** legt fest, welche Werte *zusätzlich* zu S&P 500 und MSCI World geladen werden
+  (z. B. ETFs oder Nebenwerte). Nur geladene Werte können ins Portfolio aufgenommen werden.
+  ETFs werden angezeigt (Kurs, Performance), erhalten aber keinen Score.
 
 Ticker-Endungen: `.DE` Xetra · `.L` London · `.PA` Paris · `.AS` Amsterdam · `.SW` Schweiz ·
 `.MI` Mailand · `.MC` Madrid · `.CO` Kopenhagen · `.ST` Stockholm · `.T` Tokio · `.HK` Hongkong ·

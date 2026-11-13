@@ -132,6 +132,7 @@ const state = {
   sort: { key: 'mcap', dir: -1 },
   page: 1,
   shown: CARD_STEP,
+  mode: 'screener',
   f: { ...DEFAULT_FILTERS },
 };
 
@@ -144,7 +145,18 @@ const store = {
   get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
   set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
 };
-const favs = new Set(store.get('stockratio.favs', []));
+// Favourites: v2 is seeded once from watchlist.txt (stocks flagged "WL"),
+// afterwards it is fully controlled by the star buttons.
+const FAV_KEY = 'stockratio.favs.v2';
+const storedFavs = store.get(FAV_KEY, null);
+const favs = new Set(Array.isArray(storedFavs) ? storedFavs : []);
+const favsSeeded = Array.isArray(storedFavs);
+
+// Portfolio: [{ s: symbol, shares }] + display currency
+const PF_KEY = 'stockratio.portfolio.v1';
+const PF = Object.assign({ cur: 'EUR', positions: [] }, store.get(PF_KEY, {}));
+const savePF = () => store.set(PF_KEY, PF);
+let BYSYM = {};
 
 /* ---------------------------------------------------------------- columns */
 
@@ -178,7 +190,7 @@ const COLUMNS = {
       const stale = s.stale ? `<span class="stale" title="Konnte heute nicht aktualisiert werden – Daten vom ${esc(s.stale)}">⚠</span>` : '';
       return `<div class="name-cell"><button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>
         <div><span class="nm" title="${esc(s.n)}">${esc(s.n)}</span>
-        <span class="tk">${esc(s.s)}${iso ? ' · ' + iso : ''}${stale}</span></div></div>`;
+        <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : iso ? ' · ' + iso : ''}${stale}</span></div></div>`;
     },
   },
   score: {
@@ -186,7 +198,7 @@ const COLUMNS = {
     sort: (s) => s.score, dir: -1, cls: 'l',
     render: (s) => isNum(s.score)
       ? `<span class="pill lv-${s.label}"><span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span></span>`
-      : NA,
+      : s.type === 'ETF' ? '<span class="badge b-etf" title="ETFs erhalten keinen Score">ETF</span>' : NA,
   },
   px: { label: 'Kurs', sort: (s) => s.px, dir: -1, render: priceFmt },
   d1: { label: '1 Tag', sort: (s) => s.d1, dir: -1, render: (s) => pct(s.d1, 1, true, true) },
@@ -283,8 +295,8 @@ const PRESETS = [
     test: (s) => s.divY >= 0.03 && isNum(s.payout) && s.payout <= 0.8 && s.sQual >= 50, sort: { key: 'divY', dir: -1 } },
   { id: 'expensive', label: 'Zu teuer – Vorsicht', desc: 'Die teuersten 15 % nach Bewertungs-Score',
     test: (s) => isNum(s.sVal) && s.sVal <= 15, sort: { key: 'sVal', dir: 1 } },
-  { id: 'watch', label: '★ Watchlist', desc: 'Aktien aus watchlist.txt und deine Favoriten (★)',
-    test: (s) => favs.has(s.s) || (s.idx || []).includes('WL'), sort: { key: 'score', dir: -1 } },
+  { id: 'fav', label: '★ Favoriten', desc: 'Deine mit ★ markierten Aktien und ETFs',
+    test: (s) => favs.has(s.s), sort: { key: 'score', dir: -1 } },
 ];
 
 /* ---------------------------------------------------------------- filtering */
@@ -306,6 +318,7 @@ function matches(s) {
 
   if (f.index) {
     if (f.index === 'FAV') { if (!favs.has(s.s)) return false; }
+    else if (f.index === 'ETF') { if (s.type !== 'ETF') return false; }
     else if (!(s.idx || []).includes(f.index)) return false;
   }
   if (f.region) {
@@ -409,13 +422,13 @@ function renderCards() {
     const iso = countryIso(s.cty);
     const score = isNum(s.score)
       ? `<span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span>`
-      : '<span class="na">kein Score</span>';
+      : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : '<span class="na">kein Score</span>';
     const stale = s.stale ? ' <span class="stale">⚠</span>' : '';
     return `<article class="scard" data-sym="${esc(s.s)}" tabindex="0">
       <div class="sc-top">
         <button class="star ${favs.has(s.s) ? 'on' : ''}" data-fav="${esc(s.s)}" aria-label="Favorit">★</button>
         <div class="sc-name"><span class="nm">${esc(s.n)}</span>
-          <span class="tk">${esc(s.s)}${iso ? ' · ' + iso : ''} · ${esc(sectorDe(s.sec))}${stale}</span></div>
+          <span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : `${iso ? ' · ' + iso : ''} · ${esc(sectorDe(s.sec))}`}${stale}</span></div>
         <div class="sc-score pill lv-${esc(s.label || 'Neutral')}">${score}</div>
       </div>
       <div class="sc-px"><span class="p">${priceFmt(s)}</span>${pct(s.d1, 1, true, true)}<span class="m">${mcapFmt(s.mcap)}</span></div>
@@ -500,6 +513,7 @@ function update({ resetPage = true } = {}) {
 
 function writeHash() {
   const p = new URLSearchParams();
+  if (state.mode === 'portfolio') p.set('m', 'pf');
   if (state.q) p.set('q', state.q);
   if (state.preset) p.set('p', state.preset);
   if (state.view !== 'overview') p.set('v', state.view);
@@ -515,7 +529,9 @@ function writeHash() {
 function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   state.q = p.get('q') || '';
-  state.preset = PRESETS.some((x) => x.id === p.get('p')) ? p.get('p') : '';
+  state.mode = p.get('m') === 'pf' ? 'portfolio' : 'screener';
+  const preset = p.get('p') === 'watch' ? 'fav' : p.get('p');
+  state.preset = PRESETS.some((x) => x.id === preset) ? preset : '';
   state.view = VIEWS.some((v) => v[0] === p.get('v')) ? p.get('v') : 'overview';
   const s = p.get('s');
   if (s && COLUMNS[s.slice(0, -1)]) state.sort = { key: s.slice(0, -1), dir: s.endsWith('+') ? 1 : -1 };
@@ -567,8 +583,13 @@ function openDetail(sym) {
   const share = buyShare(s);
   const [plus, minus] = reasons(s);
   const iso = countryIso(s.cty);
-  const idxNames = { SP500: 'S&P 500', MSCI: 'MSCI World', WL: 'Watchlist' };
+  const idxNames = { SP500: 'S&P 500', MSCI: 'MSCI World', WL: 'watchlist.txt' };
+  const isEtf = s.type === 'ETF';
+  const held = PF.positions.find((p) => p.s === s.s);
+  const heldVal = held ? positionValue(held) : null;
   const tags = [
+    isEtf ? 'ETF' : null,
+    isEtf && isNum(s.aum) ? `Fondsvolumen ${mcapFmt(s.aum)}` : null,
     s.sec ? `${sectorDe(s.sec)}${s.ind ? ' · ' + s.ind : ''}` : null,
     s.cty ? countryDe(s.cty) : null,
     ...(s.idx || []).map((i) => idxNames[i]),
@@ -619,10 +640,13 @@ function openDetail(sym) {
       <button class="close" aria-label="Schließen" data-close>×</button>
     </div>
     <div class="d-tags">${tags}</div>
-    <div class="d-price">${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small> <small class="muted">· ${mcapFmt(s.mcap)}</small></div>
+    <div class="d-price">${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small>${isNum(s.mcap) ? ` <small class="muted">· ${mcapFmt(s.mcap)}</small>` : ''}</div>
+    ${held ? `<div class="d-held">Im Portfolio: <b>${money(heldVal)}</b> · ${fmtShares(held.shares)} Stück</div>` : ''}
     ${s.stale ? `<p class="stale">⚠ Konnte zuletzt nicht aktualisiert werden – Daten vom ${esc(s.stale)}.</p>` : ''}
 
     <div class="d-grid">
+      ${isEtf ? `<section class="card"><h3>ETF</h3><p class="muted">Für ETFs gibt es keinen StockRatio-Score, kein KGV und keine Analystenbewertung –
+        diese Kennzahlen beziehen sich auf einzelne Unternehmen. Angezeigt werden Kurs und Kursentwicklung.</p></section>` : `
       <section class="card lv-${esc(s.label || 'Neutral')}">
         <h3>StockRatio-Score</h3>
         <div class="score-big">
@@ -642,7 +666,7 @@ function openDetail(sym) {
           <span>Potenzial</span><span>${pct(s.up, 1, true, true)}</span>
           <span>Gewinnschätzung 90 T</span><span>${pct(s.rev90, 1, true, true)}</span>
         </div>
-      </section>
+      </section>`}
 
       <section class="card">
         <h3>Kursentwicklung</h3>
@@ -656,7 +680,7 @@ function openDetail(sym) {
           <span>Beta</span><span>${num(s.beta, 2)}</span>
         </div>
       </section>
-
+      ${isEtf ? '' : `
       <section class="card">
         <h3>Einordnung</h3>
         <ul class="reasons">
@@ -685,13 +709,14 @@ function openDetail(sym) {
             ${mrow('EPS-Wachstum n. J.', 'epsGny', p1, false)}
           </tbody>
         </table>
-      </section>
+      </section>`}
     </div>
 
     <div class="links">
       <a href="https://finance.yahoo.com/quote/${encodeURIComponent(s.s)}" target="_blank" rel="noopener">Yahoo Finance ↗</a>
       ${s.web && /^https?:\/\//.test(s.web) ? `<a href="${esc(s.web)}" target="_blank" rel="noopener">Unternehmens-Website ↗</a>` : ''}
       <button class="btn ghost" data-fav="${esc(s.s)}">${favs.has(s.s) ? '★ Aus Favoriten entfernen' : '☆ Zu Favoriten'}</button>
+      <button class="btn ghost" data-pf="${esc(s.s)}">${held ? '✎ Portfolio-Position bearbeiten' : '+ Zum Portfolio'}</button>
     </div>`;
   const dlg = $('#detail');
   if (!dlg.open) {
@@ -739,7 +764,8 @@ function pctRaw(v) { return isNum(v) ? Math.round(v * 1000) / 10 : null; }
 
 function toggleFav(sym) {
   if (favs.has(sym)) favs.delete(sym); else favs.add(sym);
-  store.set('stockratio.favs', [...favs]);
+  store.set(FAV_KEY, [...favs]);
+  if (state.mode === 'portfolio') renderPortfolio();
 }
 
 function setFiltersOpen(open, { fromHistory = false } = {}) {
@@ -794,7 +820,7 @@ function bindEvents() {
       toggleFav(fav.dataset.fav);
       fav.classList.toggle('on', favs.has(fav.dataset.fav));
       renderPresets();
-      if (state.preset === 'watch' || state.f.index === 'FAV') update({ resetPage: false });
+      update({ resetPage: false });
       return;
     }
     const card = e.target.closest('[data-sym]');
@@ -879,7 +905,7 @@ function bindEvents() {
       toggleFav(fav.dataset.fav);
       fav.classList.toggle('on', favs.has(fav.dataset.fav));
       renderPresets();
-      if (state.preset === 'watch' || state.f.index === 'FAV') update({ resetPage: false });
+      update({ resetPage: false });
       return;
     }
     const tr = e.target.closest('tr[data-sym]');
@@ -905,6 +931,13 @@ function bindEvents() {
   const dlg = $('#detail');
   dlg.addEventListener('click', (e) => {
     if (e.target === dlg || e.target.closest('[data-close]')) { dlg.close(); return; }
+    const pfBtn = e.target.closest('[data-pf]');
+    if (pfBtn) {
+      dlg.close();
+      setMode('portfolio');
+      startEdit(pfBtn.dataset.pf);
+      return;
+    }
     const fav = e.target.closest('[data-fav]');
     if (fav) {
       toggleFav(fav.dataset.fav);
@@ -913,6 +946,329 @@ function bindEvents() {
       update({ resetPage: false });
     }
   });
+}
+
+/* ---------------------------------------------------------------- portfolio */
+
+const MINOR_CUR = { GBp: ['GBP', 0.01], GBX: ['GBP', 0.01], ZAc: ['ZAR', 0.01], ILA: ['ILS', 0.01] };
+const CUR_SIGN = { EUR: '€', USD: '$' };
+const pf = { sel: null, editing: null };
+
+function usdPerUnit(cur) {
+  const [major, mult] = MINOR_CUR[cur] || [cur, 1];
+  const rate = (DATA && DATA.fx || {})[major];
+  return isNum(rate) ? rate * mult : null;
+}
+// price of one share in the portfolio currency
+function priceIn(s, target = PF.cur) {
+  const from = usdPerUnit(s.cur), to = usdPerUnit(target);
+  return isNum(s.px) && from && to ? (s.px * from) / to : null;
+}
+function positionValue(p) {
+  const s = BYSYM[p.s];
+  const price = s ? priceIn(s) : null;
+  return price !== null ? price * p.shares : null;
+}
+function money(v, digits = 2) {
+  if (!isNum(v)) return '–';
+  return new Intl.NumberFormat('de-DE', { style: 'currency', currency: PF.cur, minimumFractionDigits: digits, maximumFractionDigits: digits }).format(v);
+}
+function fmtShares(n) {
+  return new Intl.NumberFormat('de-DE', { maximumFractionDigits: n >= 100 ? 2 : 4 }).format(n);
+}
+function parseAmount(text) {
+  let t = String(text || '').trim().replace(/[\s€$]/g, '');
+  if (!t) return null;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.'); // 1.234,56
+  else if (/^\d{1,3}(\.\d{3})+$/.test(t)) t = t.replace(/\./g, ''); // 2.500
+  const n = parseFloat(t);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function setMode(mode, { initial = false } = {}) {
+  state.mode = mode === 'portfolio' ? 'portfolio' : 'screener';
+  const isPf = state.mode === 'portfolio';
+  $('#screenerView').hidden = isPf;
+  $('#portfolioView').hidden = !isPf;
+  document.querySelectorAll('#modes [data-mode]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === state.mode)));
+  if (isPf) renderPortfolio();
+  else if (!initial) update({ resetPage: false });
+  writeHash();
+  if (!initial) window.scrollTo({ top: 0 });
+}
+
+function renderPortfolio() {
+  if (!DATA) return;
+  const rows = PF.positions
+    .map((p) => {
+      const s = BYSYM[p.s];
+      const value = positionValue(p);
+      const day = isNum(value) && s && isNum(s.d1) ? value - value / (1 + s.d1) : null;
+      return { p, s, value, day };
+    })
+    .sort((a, b) => (b.value ?? -1) - (a.value ?? -1));
+  const total = rows.reduce((a, r) => a + (r.value || 0), 0);
+  const dayTotal = rows.reduce((a, r) => a + (r.day || 0), 0);
+  const dayPct = total - dayTotal > 0 ? dayTotal / (total - dayTotal) : null;
+  const wavg = (key) => {
+    let num = 0, den = 0;
+    rows.forEach((r) => { if (r.s && isNum(r.s[key]) && r.value) { num += r.s[key] * r.value; den += r.value; } });
+    return den ? { v: num / den, share: total ? den / total : 0 } : null;
+  };
+  const score = wavg('score'), r52 = wavg('r52'), rel52 = wavg('rel52');
+  const etfShare = total ? rows.filter((r) => r.s && r.s.type === 'ETF').reduce((a, r) => a + (r.value || 0), 0) / total : 0;
+
+  $('#pfSummary').innerHTML = `
+    <div class="pf-top">
+      <h2>Mein Portfolio</h2>
+      <div class="seg cur-seg" role="group" aria-label="Währung">
+        ${['EUR', 'USD'].map((c) => `<button data-cur="${c}" aria-selected="${PF.cur === c}">${CUR_SIGN[c]} ${c}</button>`).join('')}
+      </div>
+    </div>
+    <div class="pf-value">${rows.length ? money(total) : money(0)}</div>
+    <div class="pf-day">${rows.length && isNum(dayPct)
+      ? `<span class="${dayTotal >= 0 ? 'up' : 'down'}">${dayTotal >= 0 ? '+' : ''}${money(dayTotal)} (${pct(dayPct, 2, true)})</span> heute`
+      : '<span class="muted">Noch keine Positionen</span>'}</div>
+    ${rows.length ? `<div class="pf-stats">
+      <div><small>Positionen</small><b>${rows.length}</b></div>
+      <div title="Wertgewichteter StockRatio-Score der Einzelaktien (ETFs ohne Score)"><small>Ø Score</small><b>${score ? NF[0].format(score.v) : '–'}</b></div>
+      <div><small>Ø Perf. 52 W</small><b>${r52 ? pct(r52.v, 1, true, true) : '–'}</b></div>
+      <div><small>Ø vs. S&amp;P 500</small><b>${rel52 ? pct(rel52.v, 1, true, true) : '–'}</b></div>
+      <div><small>Anteil ETFs</small><b>${pct(etfShare, 0)}</b></div>
+    </div>` : ''}`;
+
+  $('#pfList').innerHTML = rows.length ? rows.map(({ p, s, value, day }) => {
+    const w = total && value ? value / total : 0;
+    if (!s) {
+      return `<div class="pf-row missing"><div class="pf-name"><span class="nm">${esc(p.s)}</span>
+        <span class="tk">Nicht mehr in den Daten – in watchlist.txt eintragen</span></div>
+        <div class="pf-act"><button class="icon-btn" data-del="${esc(p.s)}" aria-label="Entfernen">✕</button></div></div>`;
+    }
+    const scoreHtml = isNum(s.score)
+      ? `<span class="pill lv-${s.label}"><span class="score-num">${NF[0].format(s.score)}</span><span class="lbl">${esc(s.label)}</span></span>`
+      : s.type === 'ETF' ? '<span class="badge b-etf">ETF</span>' : NA;
+    return `<div class="pf-row" data-sym="${esc(s.s)}" tabindex="0">
+      <div class="pf-name"><span class="nm">${esc(s.n)}</span>
+        <span class="tk">${esc(s.s)} · ${fmtShares(p.shares)} Stk. · ${priceFmt(s)}</span></div>
+      <div class="pf-val"><b>${money(value)}</b><span>${pct(s.d1, 1, true, true)}${isNum(day) ? ` <span class="muted">(${day >= 0 ? '+' : ''}${money(day)})</span>` : ''}</span></div>
+      <div class="pf-w"><span class="bar"><i style="width:${(w * 100).toFixed(1)}%"></i></span><span>${pct(w, 1)}</span></div>
+      <div class="pf-score">${scoreHtml}</div>
+      <div class="pf-act">
+        <button class="icon-btn" data-edit="${esc(s.s)}" aria-label="Bearbeiten" title="Bearbeiten">✎</button>
+        <button class="icon-btn" data-del="${esc(s.s)}" aria-label="Entfernen" title="Entfernen">✕</button>
+      </div>
+    </div>`;
+  }).join('') : `<div class="pf-empty card">
+      <b>Dein Portfolio ist noch leer.</b>
+      <p class="muted">Suche unten eine Aktie oder einen ETF, gib den Wert (oder die Stückzahl) ein, die du besitzt, und tippe auf „Hinzufügen“.
+      Deine Favoriten kannst du direkt antippen.</p></div>`;
+
+  renderPfForm();
+}
+
+function renderPfForm() {
+  const held = new Set(PF.positions.map((p) => p.s));
+  const quick = [...favs].filter((sym) => BYSYM[sym] && !held.has(sym));
+  $('#pfQuick').innerHTML = !pf.editing && quick.length
+    ? `<span class="muted">Aus Favoriten:</span>${quick.map((sym) => `<button class="chip" data-pick="${esc(sym)}">${esc(shortName(BYSYM[sym]))}</button>`).join('')}`
+    : '';
+  const s = pf.sel ? BYSYM[pf.sel] : null;
+  $('#pfSelected').hidden = !s;
+  $('#pfSelected').innerHTML = s
+    ? `<div><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''} · ${priceFmt(s)}${PF.cur !== majorOf(s.cur) && isNum(priceIn(s)) ? ` ≈ ${money(priceIn(s))}` : ''}</span></div>
+       ${pf.editing ? '' : '<button class="icon-btn" id="pfClear" aria-label="Auswahl entfernen">✕</button>'}`
+    : '';
+  $('#pfFormTitle').textContent = pf.editing ? 'Position bearbeiten' : 'Position hinzufügen';
+  $('#pfSave').textContent = pf.editing ? 'Speichern' : 'Hinzufügen';
+  $('#pfCancel').hidden = !pf.editing;
+  $('#pfSearch').parentElement.hidden = !!pf.editing;
+  const modeSel = $('#pfMode');
+  modeSel.options[0].textContent = `Wert in ${CUR_SIGN[PF.cur]}`;
+  updatePfHint();
+}
+
+const majorOf = (cur) => (MINOR_CUR[cur] || [cur])[0];
+const shortName = (s) => (s.n || s.s).replace(/,? (Inc\.?|Corporation|Corp\.?|Holdings?|N\.V\.|AG|SE|plc|Ltd\.?|Limited|S\.A\.)$/i, '').slice(0, 28);
+
+function updatePfHint() {
+  const s = pf.sel ? BYSYM[pf.sel] : null;
+  const amount = parseAmount($('#pfAmount').value);
+  const mode = $('#pfMode').value;
+  const price = s ? priceIn(s) : null;
+  let hint = '';
+  if (s && amount && price) {
+    hint = mode === 'value'
+      ? `= ${fmtShares(amount / price)} Stück zum aktuellen Kurs`
+      : `= ${money(amount * price)} zum aktuellen Kurs`;
+  } else if (s && !price) {
+    hint = 'Für diese Währung fehlt ein Wechselkurs – bitte morgen erneut versuchen.';
+  } else if (!s) {
+    hint = 'Wähle zuerst eine Aktie oder einen ETF aus.';
+  }
+  $('#pfHint').textContent = hint;
+  $('#pfSave').disabled = !(s && amount && price);
+}
+
+function pickForPortfolio(sym) {
+  pf.sel = sym;
+  const existing = PF.positions.find((p) => p.s === sym);
+  if (existing) { startEdit(sym); return; }
+  $('#pfSearch').value = '';
+  $('#pfSuggest').hidden = true;
+  renderPfForm();
+  $('#pfAmount').focus();
+}
+
+function startEdit(sym) {
+  if (!BYSYM[sym]) return;
+  const existing = PF.positions.find((p) => p.s === sym);
+  pf.sel = sym;
+  pf.editing = existing ? sym : null;
+  $('#pfMode').value = 'value';
+  $('#pfAmount').value = existing ? new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, useGrouping: false }).format(positionValue(existing) || 0) : '';
+  renderPfForm();
+  $('#pfForm').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  setTimeout(() => $('#pfAmount').focus({ preventScroll: true }), 300);
+}
+
+function resetPfForm() {
+  pf.sel = null; pf.editing = null;
+  $('#pfAmount').value = ''; $('#pfSearch').value = '';
+  $('#pfSuggest').hidden = true;
+  renderPfForm();
+}
+
+function savePosition() {
+  const s = pf.sel ? BYSYM[pf.sel] : null;
+  const amount = parseAmount($('#pfAmount').value);
+  const price = s ? priceIn(s) : null;
+  if (!s || !amount || !price) return;
+  const shares = $('#pfMode').value === 'value' ? amount / price : amount;
+  const existing = PF.positions.find((p) => p.s === s.s);
+  if (existing) existing.shares = shares; else PF.positions.push({ s: s.s, shares });
+  savePF();
+  toast(existing ? `${shortName(s)} aktualisiert` : `${shortName(s)} hinzugefügt`);
+  resetPfForm();
+  renderPortfolio();
+}
+
+function suggest(query) {
+  const q = query.trim().toLowerCase();
+  const box = $('#pfSuggest');
+  if (q.length < 1) { box.hidden = true; return; }
+  const scoreOf = (s) => {
+    const sym = s.s.toLowerCase(), name = (s.n || '').toLowerCase();
+    if (sym === q || (s.isin || '').toLowerCase() === q) return 0;
+    if (sym.startsWith(q)) return 1;
+    if (name.startsWith(q)) return 2;
+    if (name.includes(q) || sym.includes(q)) return 3;
+    return 9;
+  };
+  const hits = STOCKS.map((s) => [scoreOf(s), s]).filter((x) => x[0] < 9)
+    .sort((a, b) => a[0] - b[0] || (b[1].mcap || 0) - (a[1].mcap || 0)).slice(0, 8);
+  box.innerHTML = hits.length
+    ? hits.map(([, s]) => `<li role="option" data-pick="${esc(s.s)}"><span><b>${esc(s.n)}</b><span class="tk">${esc(s.s)}${s.type === 'ETF' ? ' · ETF' : ''}</span></span><span class="tk">${priceFmt(s)}</span></li>`).join('')
+    : '<li class="muted">Nichts gefunden – nur Werte aus S&amp;P 500, MSCI World und watchlist.txt sind verfügbar.</li>';
+  box.hidden = false;
+}
+
+function bindPortfolio() {
+  $('#modes').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mode]');
+    if (b) setMode(b.dataset.mode);
+  });
+  $('#pfSummary').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-cur]');
+    if (!b) return;
+    PF.cur = b.dataset.cur;
+    savePF();
+    renderPortfolio();
+  });
+  let t;
+  $('#pfSearch').addEventListener('input', (e) => { clearTimeout(t); t = setTimeout(() => suggest(e.target.value), 80); });
+  $('#pfSearch').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { const first = $('#pfSuggest [data-pick]'); if (first) pickForPortfolio(first.dataset.pick); }
+    if (e.key === 'Escape') $('#pfSuggest').hidden = true;
+  });
+  document.addEventListener('click', (e) => { if (!e.target.closest('.pf-search')) $('#pfSuggest').hidden = true; });
+  $('#portfolioView').addEventListener('click', (e) => {
+    const pick = e.target.closest('[data-pick]');
+    if (pick) { pickForPortfolio(pick.dataset.pick); return; }
+    if (e.target.closest('#pfClear')) { resetPfForm(); return; }
+    const edit = e.target.closest('[data-edit]');
+    if (edit) { startEdit(edit.dataset.edit); return; }
+    const del = e.target.closest('[data-del]');
+    if (del) {
+      const s = BYSYM[del.dataset.del];
+      if (confirm(`${s ? s.n : del.dataset.del} aus dem Portfolio entfernen?`)) {
+        PF.positions = PF.positions.filter((p) => p.s !== del.dataset.del);
+        savePF();
+        if (pf.editing === del.dataset.del) resetPfForm();
+        renderPortfolio();
+      }
+      return;
+    }
+    const row = e.target.closest('.pf-row[data-sym]');
+    if (row) openDetail(row.dataset.sym);
+  });
+  $('#pfList').addEventListener('keydown', (e) => {
+    const row = e.target.closest('.pf-row[data-sym]');
+    if (row && e.key === 'Enter') openDetail(row.dataset.sym);
+  });
+  $('#pfAmount').addEventListener('input', updatePfHint);
+  $('#pfAmount').addEventListener('keydown', (e) => { if (e.key === 'Enter') savePosition(); });
+  $('#pfMode').addEventListener('change', updatePfHint);
+  $('#pfSave').addEventListener('click', savePosition);
+  $('#pfCancel').addEventListener('click', resetPfForm);
+  $('#pfTransfer').addEventListener('click', shareTransferLink);
+}
+
+/* transfer portfolio + favourites to another device via a link */
+function shareTransferLink() {
+  const payload = { v: 1, f: [...favs], p: PF };
+  const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+  const url = `${location.origin}${location.pathname}#import=${encodeURIComponent(b64)}`;
+  const text = 'StockRatio: Portfolio & Favoriten übernehmen';
+  if (navigator.share && isMobile()) {
+    navigator.share({ title: text, url }).catch(() => {});
+    return;
+  }
+  const done = () => toast('Link kopiert – öffne ihn auf dem anderen Gerät.');
+  if (navigator.clipboard) navigator.clipboard.writeText(url).then(done, () => prompt('Diesen Link auf dem anderen Gerät öffnen:', url));
+  else prompt('Diesen Link auf dem anderen Gerät öffnen:', url);
+}
+
+function readImportLink() {
+  const params = new URLSearchParams(location.hash.slice(1));
+  const raw = params.get('import');
+  if (!raw) return false;
+  history.replaceState(null, '', location.pathname + location.search + '#m=pf');
+  try {
+    const payload = JSON.parse(decodeURIComponent(escape(atob(raw))));
+    if (!payload || !Array.isArray(payload.f) || !payload.p) throw new Error('format');
+    if (!confirm('Portfolio und Favoriten aus dem Link übernehmen? Die Daten auf diesem Gerät werden ersetzt.')) return false;
+    favs.clear(); payload.f.forEach((x) => favs.add(String(x)));
+    store.set(FAV_KEY, [...favs]);
+    PF.cur = payload.p.cur === 'USD' ? 'USD' : 'EUR';
+    PF.positions = (payload.p.positions || [])
+      .filter((p) => p && typeof p.s === 'string' && isNum(p.shares) && p.shares > 0)
+      .map((p) => ({ s: p.s, shares: p.shares }));
+    savePF();
+    return true;
+  } catch {
+    alert('Der Übertragungs-Link ist ungültig.');
+    return false;
+  }
+}
+
+let toastTimer;
+function toast(msg) {
+  let el = document.getElementById('toast');
+  if (!el) { el = document.createElement('div'); el.id = 'toast'; el.className = 'toast'; el.setAttribute('role', 'status'); document.body.appendChild(el); }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2600);
 }
 
 /* ---------------------------------------------------------------- init */
@@ -946,8 +1302,10 @@ function renderMeta() {
 }
 
 async function init() {
+  const imported = readImportLink();
   readHash();
   bindEvents();
+  bindPortfolio();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');
@@ -966,11 +1324,18 @@ async function init() {
   }
   STOCKS = DATA.stocks || [];
   MED = DATA.sectors || {};
+  BYSYM = Object.fromEntries(STOCKS.map((x) => [x.s, x]));
+  if (!favsSeeded && !imported) {
+    STOCKS.filter((x) => (x.idx || []).includes('WL')).forEach((x) => favs.add(x.s));
+    store.set(FAV_KEY, [...favs]);
+  }
   renderMeta();
   fillSelects();
   renderPresets();
   renderViews();
   update({ resetPage: false });
+  setMode(state.mode, { initial: true });
+  if (imported) toast('Portfolio und Favoriten wurden übernommen.');
 }
 
 init();

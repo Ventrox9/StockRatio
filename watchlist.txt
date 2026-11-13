@@ -1,13 +1,17 @@
 # Eigene Watchlist – ein Yahoo-Finance-Ticker pro Zeile.
-# Diese Aktien werden zusätzlich zu S&P 500 und MSCI World geladen
-# und auf der Webseite mit "Watchlist" markiert.
+# Diese Aktien/ETFs werden zusätzlich zu S&P 500 und MSCI World geladen.
+# Sie sind beim ersten Besuch als Favoriten (★) vorausgewählt – auf der
+# Webseite kannst du sie jederzeit mit dem Stern an- und abwählen.
+# Alles, was du ins Portfolio aufnehmen willst, muss hier oder in einem
+# der Indizes enthalten sein.
+#
 # Ticker-Endungen: .DE Xetra, .L London, .PA Paris, .AS Amsterdam,
 # .SW Schweiz, .T Tokio, .HK Hongkong, .TO Toronto (US-Aktien ohne Endung).
-#
-# Beispiele:
-RHM.DE
-HAG.DE
-TSM
-BABA
-NU
-NOVO-B.CO
+
+RHM.DE      # Rheinmetall
+NVDA        # NVIDIA
+SEC0.DE     # iShares MSCI Global Semiconductors UCITS ETF (Acc), Xetra
+MP          # MP Materials
+EUNL.DE     # iShares Core MSCI World UCITS ETF (Acc), Xetra
+ASML.AS     # ASML Holding
+MSTR        # Strategy

@@ -51,7 +51,7 @@ BASE_CURRENCIES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "HKD", "SEK"
                    "NOK", "SGD", "ILS", "NZD"}
 
 
-def fetch_all(symbols: list[str], workers: int) -> tuple[dict[str, dict], list[str]]:
+def fetch_all(symbols: list[str], workers: int) -> tuple[dict[str, dict], list[str], dict[str, float]]:
     client = YahooClient()
     fx = fetch_fx(client, BASE_CURRENCIES)
     log.info("FX rates: %s", {k: round(v, 4) for k, v in fx.items()})
@@ -94,7 +94,17 @@ def fetch_all(symbols: list[str], workers: int) -> tuple[dict[str, dict], list[s
         except Exception as exc:
             log.warning("could not parse %s: %s", sym, exc)
     failed = [s for s in symbols if s not in records]
-    return records, failed
+
+    # ETFs: Yahoo has no 52-week change in quoteSummary -> derive it from the price history.
+    for sym, rec in records.items():
+        if rec.get("type") == "ETF" and rec.get("r52") is None:
+            try:
+                closes = client.chart_closes(sym)
+                if len(closes) >= 40 and closes[0] > 0:
+                    rec["r52"] = round(closes[-1] / closes[0] - 1, 4)
+            except Exception as exc:
+                log.warning("chart for %s failed: %s", sym, exc)
+    return records, failed, fx
 
 
 def load_previous(source: str | None) -> dict[str, dict]:
@@ -136,7 +146,7 @@ def main() -> int:
     symbols = list(meta)
     log.info("fetching %d stocks with %d workers", len(symbols), args.workers)
 
-    records, failed = fetch_all(symbols, args.workers)
+    records, failed, fx = fetch_all(symbols, args.workers)
     fresh = len(records)
     log.info("fetched %d/%d stocks, %d failed", fresh, len(symbols), len(failed))
 
@@ -169,7 +179,15 @@ def main() -> int:
         rows.append(rec)
 
     df = pd.DataFrame(rows)
-    df = score(df)
+    if "type" not in df:
+        df["type"] = None
+    for rec in rows:  # ETFs: relative performance vs. S&P 500
+        if rec.get("type") == "ETF" and rec.get("r52") is not None and sp52 is not None:
+            rec["rel52"] = round((1 + rec["r52"]) / (1 + sp52) - 1, 4)
+    df = pd.DataFrame(rows)
+    is_etf = df["type"] == "ETF"
+    # the score compares companies – ETFs are shown but not scored
+    df = pd.concat([score(df[~is_etf]), df[is_etf]], ignore_index=True)
     df = df.sort_values("mcap", ascending=False, na_position="last")
 
     stocks = []
@@ -183,6 +201,7 @@ def main() -> int:
         "fresh": fresh,
         "stale": stale,
         "sp500_52w": sp52,
+        "fx": {k: round(v, 6) for k, v in fx.items()},  # 1 unit -> USD
         "weights": PILLAR_WEIGHTS,
         "labels": LABELS,
         "sectors": sector_medians(df),

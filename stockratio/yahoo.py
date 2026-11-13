@@ -94,6 +94,15 @@ class YahooClient:
         )
         return payload.get("quotes") or []
 
+    def chart_closes(self, symbol: str, range_: str = "1y", interval: str = "1wk") -> list[float]:
+        payload = self.get_json(
+            "https://query2.finance.yahoo.com/v8/finance/chart/" + symbol,
+            {"range": range_, "interval": interval},
+        )
+        result = ((payload.get("chart") or {}).get("result") or [None])[0] or {}
+        quote = ((result.get("indicators") or {}).get("quote") or [{}])[0]
+        return [c for c in (quote.get("close") or []) if c is not None]
+
     def quotes(self, symbols: list[str]) -> list[dict]:
         out: list[dict] = []
         for i in range(0, len(symbols), 50):
