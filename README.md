@@ -41,6 +41,7 @@ Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprog
 ## Einrichtung (einmalig)
 
 1. **GitHub Pages aktivieren:** Repository → *Settings* → *Pages* → *Build and deployment* → Source: **GitHub Actions**.
+   ⚠ **Nicht** „Deploy from a branch“ – sonst veröffentlicht GitHub die README als Startseite statt des Tools.
 2. **Workflow starten:** *Actions* → „Daten aktualisieren & Seite veröffentlichen“ → *Run workflow*.
    Nach ca. 3–5 Minuten ist die Seite erreichbar unter
    `https://<dein-github-name>.github.io/<repo-name>/` (der Link steht auch im Workflow-Lauf).

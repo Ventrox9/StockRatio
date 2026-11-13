@@ -5,14 +5,9 @@ on:
     # Mo–Fr 22:17 UTC – nach US-Börsenschluss (Europa/Asien sind dann ebenfalls geschlossen)
     - cron: "17 22 * * 1-5"
   workflow_dispatch: # manuell starten: Actions -> dieser Workflow -> "Run workflow"
+  # bei JEDEM Push neu veröffentlichen – auch bei reinen README-Änderungen. Steht GitHub Pages noch auf
+  # "Deploy from a branch", würde sonst GitHubs eigener Build die README als Startseite veröffentlichen.
   push:
-    paths:
-      - "site/**"
-      - "stockratio/**"
-      - "data/**"
-      - "watchlist.txt"
-      - "requirements.txt"
-      - ".github/workflows/update.yml"
 
 permissions:
   contents: read
