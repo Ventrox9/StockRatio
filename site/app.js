@@ -162,6 +162,12 @@ const PLAN_KEY = 'stockratio.plan.v1';
 const PLAN = Object.assign({ budget: null, mode: 'smart', frozen: false, items: [] }, store.get(PLAN_KEY, {}));
 if (!Array.isArray(PLAN.items)) PLAN.items = [];
 const savePlan = () => store.set(PLAN_KEY, PLAN);
+
+// Take-profit / stop-loss levels for portfolio positions (stored separately, never touches PF)
+const LV_KEY = 'stockratio.pf.levels.v1';
+const LEVELS = Object.assign({ items: {} }, store.get(LV_KEY, {}));
+if (!LEVELS.items || typeof LEVELS.items !== 'object') LEVELS.items = {};
+const saveLevels = () => store.set(LV_KEY, LEVELS);
 const inPlan = (sym) => PLAN.items.some((i) => i.s === sym);
 const planBtn = (s, long = false) => {
   const on = inPlan(s.s);
@@ -1049,7 +1055,8 @@ function renderPortfolio() {
       <div><small>Ø Perf. 52 W</small><b>${r52 ? pct(r52.v, 1, true, true) : '–'}</b></div>
       <div><small>Ø vs. S&amp;P 500</small><b>${rel52 ? pct(rel52.v, 1, true, true) : '–'}</b></div>
       <div><small>Anteil ETFs</small><b>${pct(etfShare, 0)}</b></div>
-    </div>` : ''}`;
+    </div>
+    ${levelsSummaryHtml(rows)}` : ''}`;
 
   $('#pfList').innerHTML = rows.length ? rows.map(({ p, s, value, day }) => {
     const w = total && value ? value / total : 0;
@@ -1071,6 +1078,7 @@ function renderPortfolio() {
         <button class="icon-btn" data-edit="${esc(s.s)}" aria-label="Bearbeiten" title="Bearbeiten">✎</button>
         <button class="icon-btn" data-del="${esc(s.s)}" aria-label="Entfernen" title="Entfernen">✕</button>
       </div>
+      ${levelRowHtml(p, s)}
     </div>`;
   }).join('') : `<div class="pf-empty card">
       <b>Dein Portfolio ist noch leer.</b>
@@ -1239,7 +1247,7 @@ function bindPortfolio() {
 
 /* transfer portfolio + favourites to another device via a link */
 function shareTransferLink() {
-  const payload = { v: 1, f: [...favs], p: PF };
+  const payload = { v: 1, f: [...favs], p: PF, l: LEVELS.items };
   const b64 = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
   const url = `${location.origin}${location.pathname}#import=${encodeURIComponent(b64)}`;
   const text = 'StockRatio: Portfolio & Favoriten übernehmen';
@@ -1268,6 +1276,7 @@ function readImportLink() {
       .filter((p) => p && typeof p.s === 'string' && isNum(p.shares) && p.shares > 0)
       .map((p) => ({ s: p.s, shares: p.shares }));
     savePF();
+    if (payload.l && typeof payload.l === 'object') { LEVELS.items = payload.l; saveLevels(); }
     return true;
   } catch {
     alert('Der Übertragungs-Link ist ungültig.');
@@ -1336,7 +1345,8 @@ function tpsl(s) {
   const slPct = hasBeta ? clamp(0.08 * s.beta, 0.06, 0.2) : (s.type === 'ETF' ? 0.07 : 0.1);
   const sl = s.px * (1 - slPct);
   let tp, src;
-  if (isNum(s.tgt) && s.nA >= 3 && isNum(s.up) && s.up >= 1.5 * slPct && s.up <= 0.8) {
+  const up = isNum(s.tgt) ? s.tgt / s.px - 1 : null; // from the current price, not the stored upside
+  if (isNum(up) && s.nA >= 3 && up >= 1.5 * slPct && up <= 0.8) {
     tp = s.tgt; src = `Kursziel von ${s.nA} Analysten`;
   } else {
     tp = s.px * (1 + 2.5 * slPct); src = 'Chance/Risiko 2,5 : 1';
@@ -1541,12 +1551,14 @@ function commitPlan() {
     + (openLeft ? `\n${openLeft} noch offene Position(en) bleiben im Kaufplan.` : '\nDer Kaufplan wird danach geleert.');
   if (!confirm(msg)) return;
   bought.forEach((i) => {
+    setLevel(i.s);
     const shares = i.inv / priceIn(BYSYM[i.s], 'EUR');
     const existing = PF.positions.find((p) => p.s === i.s);
     if (existing) existing.shares += shares;
     else PF.positions.push({ s: i.s, shares });
   });
   savePF();
+  saveLevels();
   const remaining = PLAN.items.filter((i) => i.status === 'open');
   if (remaining.length) {
     PLAN.items = remaining;
@@ -1649,6 +1661,130 @@ function bindPlan() {
   });
 }
 
+/* ---------------------------------------------------------------- portfolio TP / SL */
+
+function setLevel(sym) {
+  const s = BYSYM[sym];
+  const t = s && tpsl(s);
+  if (!t) return false;
+  LEVELS.items[sym] = { tp: t.tp, sl: t.sl, px: s.px, cur: s.cur, src: t.src, slSrc: t.slSrc, at: new Date().toISOString() };
+  return true;
+}
+
+// TP/SL distances + money impact for one position (portfolio currency)
+function levelInfo(p, s) {
+  const L = LEVELS.items[p.s];
+  if (!L || !s || !isNum(s.px) || L.cur !== s.cur) return null;
+  const perUnit = priceIn(s);               // price in portfolio currency
+  const fx = perUnit !== null ? perUnit / s.px : null;
+  return {
+    L,
+    tpPct: L.tp / s.px - 1,
+    slPct: L.sl / s.px - 1,
+    gain: fx !== null ? p.shares * (L.tp - s.px) * fx : null,
+    loss: fx !== null ? p.shares * (L.sl - s.px) * fx : null,
+    hitTp: s.px >= L.tp,
+    hitSl: s.px <= L.sl,
+    crv: s.px > L.sl ? (L.tp - s.px) / (s.px - L.sl) : null,
+  };
+}
+
+const dateDe = (iso) => { const d = new Date(iso); return isNaN(d) ? '' : d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }); };
+const signedMoney = (v) => (isNum(v) ? `${v >= 0 ? '+' : '−'}${money(Math.abs(v), 0)}` : '–');
+
+function levelsSummaryHtml(rows) {
+  const valid = rows.filter((r) => r.s);
+  const withLv = valid.map((r) => ({ r, info: levelInfo(r.p, r.s) })).filter((x) => x.info);
+  if (!withLv.length) {
+    return `<div class="lv-bar empty">
+      <div><b>Take Profit &amp; Stop Loss</b><p class="muted">Berechnet für jede Position ein Kursziel zum Gewinnmitnehmen und eine Verlustgrenze –
+        ausgehend vom aktuellen Kurs. Die Werte werden gespeichert und bleiben fest, bis du sie neu generierst.</p></div>
+      <button class="btn primary" data-lv-act="generate">🎯 TP &amp; SL generieren</button>
+    </div>`;
+  }
+  const gain = withLv.reduce((a, x) => a + (x.info.gain || 0), 0);
+  const loss = withLv.reduce((a, x) => a + (x.info.loss || 0), 0);
+  const hits = withLv.filter((x) => x.info.hitTp || x.info.hitSl).length;
+  const missing = valid.length - withLv.length;
+  const latest = withLv.map((x) => x.info.L.at).sort().pop();
+  return `<div class="lv-bar">
+    <div class="lv-head"><b>🎯 Take Profit &amp; Stop Loss</b><span class="muted">generiert am ${dateDe(latest)}</span></div>
+    <div class="lv-sum">
+      <div><small>Wenn alle Take Profits greifen</small><b class="up">${signedMoney(gain)}</b></div>
+      <div><small>Wenn alle Stop Losses greifen</small><b class="down">${signedMoney(loss)}</b></div>
+      <div><small>Chance/Risiko gesamt</small><b>${loss < 0 ? NF[1].format(gain / -loss) + ' : 1' : '–'}</b></div>
+    </div>
+    ${hits ? `<p class="lv-alert">⚠ Bei ${hits} ${hits === 1 ? 'Position ist' : 'Positionen ist'} ein Ziel erreicht – siehe unten.</p>` : ''}
+    ${missing ? `<p class="muted lv-note">${missing} ${missing === 1 ? 'Position hat' : 'Positionen haben'} noch keine Werte – „Neu generieren“ ergänzt sie.</p>` : ''}
+    <div class="lv-actions">
+      <button class="btn" data-lv-act="generate">↻ Alle neu generieren</button>
+      <button class="btn ghost" data-lv-act="copy">Liste kopieren</button>
+      <button class="btn ghost" data-lv-act="clear">Entfernen</button>
+    </div>
+  </div>`;
+}
+
+function levelRowHtml(p, s) {
+  const info = levelInfo(p, s);
+  if (!info) return '';
+  const { L } = info;
+  const pxD = (v) => `${NF[v >= 1000 ? 0 : 2].format(v)} ${esc(s.cur || '')}`;
+  const status = info.hitTp
+    ? '<span class="lv-st hit-tp">🎯 Take Profit erreicht</span>'
+    : info.hitSl
+      ? '<span class="lv-st hit-sl">⚠ Stop Loss erreicht</span>'
+      : `<span class="lv-st">CRV ${isNum(info.crv) ? NF[1].format(info.crv) + ' : 1' : '–'}</span>`;
+  return `<div class="pf-lv">
+    <div class="lv-tp" title="${esc(L.src || '')}"><small>Take Profit</small><b>${pxD(L.tp)}</b>
+      <span class="${info.tpPct >= 0 ? 'up' : 'down'}">${pct(info.tpPct, 1, true)} · ${signedMoney(info.gain)}</span></div>
+    <div class="lv-sl" title="${esc(L.slSrc || '')}"><small>Stop Loss</small><b>${pxD(L.sl)}</b>
+      <span class="down">${pct(info.slPct, 1, true)} · ${signedMoney(info.loss)}</span></div>
+    <div class="lv-meta">${status}<span class="tk">vom ${dateDe(L.at)} · Kurs damals ${pxD(L.px)}</span></div>
+    <button class="icon-btn" data-lv-regen="${esc(s.s)}" aria-label="TP/SL für diese Position neu berechnen" title="Neu berechnen">↻</button>
+  </div>`;
+}
+
+function copyLevels() {
+  const lines = PF.positions.map((p) => {
+    const s = BYSYM[p.s], L = LEVELS.items[p.s];
+    if (!s || !L) return null;
+    const f = (v) => `${NF[v >= 1000 ? 0 : 2].format(v)} ${s.cur}`;
+    return `${s.n} (${s.s}): Take Profit ${f(L.tp)} · Stop Loss ${f(L.sl)}`;
+  }).filter(Boolean);
+  const text = lines.join('\n');
+  const done = () => toast('TP/SL-Liste kopiert');
+  if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, () => prompt('TP/SL-Liste:', text));
+  else prompt('TP/SL-Liste:', text);
+}
+
+function bindLevels() {
+  // capture phase so the buttons inside a portfolio row don't open the detail view
+  document.addEventListener('click', (e) => {
+    const act = e.target.closest('[data-lv-act]');
+    const regen = e.target.closest('[data-lv-regen]');
+    if (!act && !regen) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (regen) {
+      if (setLevel(regen.dataset.lvRegen)) { saveLevels(); toast('Take Profit & Stop Loss neu berechnet'); }
+    } else if (act.dataset.lvAct === 'generate') {
+      const had = PF.positions.some((p) => LEVELS.items[p.s]);
+      if (had && !confirm('Take Profit & Stop Loss für alle Positionen neu berechnen? Die bisherigen Werte werden ersetzt.')) return;
+      const n = PF.positions.filter((p) => setLevel(p.s)).length;
+      saveLevels();
+      toast(`TP & SL für ${n} ${n === 1 ? 'Position' : 'Positionen'} generiert`);
+    } else if (act.dataset.lvAct === 'copy') {
+      copyLevels();
+      return;
+    } else if (act.dataset.lvAct === 'clear') {
+      if (!confirm('Alle Take-Profit- und Stop-Loss-Werte entfernen? Deine Positionen bleiben unverändert.')) return;
+      PF.positions.forEach((p) => { delete LEVELS.items[p.s]; });
+      saveLevels();
+    }
+    renderPortfolio();
+  }, true);
+}
+
 /* ---------------------------------------------------------------- init */
 
 function fillSelects() {
@@ -1687,6 +1823,7 @@ async function init() {
   bindEvents();
   bindPortfolio();
   bindPlan();
+  bindLevels();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');

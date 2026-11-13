@@ -59,6 +59,14 @@ Ticker-Endungen: `.DE` Xetra · `.L` London · `.PA` Paris · `.AS` Amsterdam ·
 `.MI` Mailand · `.MC` Madrid · `.CO` Kopenhagen · `.ST` Stockholm · `.T` Tokio · `.HK` Hongkong ·
 `.TO` Toronto · US-Aktien ohne Endung.
 
+### Take Profit & Stop Loss im Portfolio
+
+Im Portfolio erzeugt **„🎯 TP & SL generieren“** für jede Position ein Kursziel und eine Verlustgrenze (gleiche Methode
+wie im Kaufplan, ausgehend vom aktuellen Kurs). Die Werte werden **festgehalten**, bis du sie neu generierst
+(alle oder einzeln mit ↻), und zeigen den möglichen Gewinn/Verlust in €/$, Summen fürs ganze Portfolio und einen
+Hinweis, sobald ein Ziel erreicht ist. „Liste kopieren“ liefert alle Werte als Text, z. B. zum Eintragen beim Broker.
+Käufe aus dem Kaufplan übernehmen automatisch dessen TP/SL. Gespeichert getrennt vom Portfolio.
+
 ## Kaufplan (+)
 
 - Mit **+** an jeder Aktie (Tabelle, Karte, Detailansicht) landet sie im **Kaufplan** (Knopf oben rechts).
