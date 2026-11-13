@@ -82,6 +82,26 @@ Käufe aus dem Kaufplan übernehmen automatisch dessen TP/SL. Gespeichert getren
   Geld bleibt uninvestiert, die übrigen Beträge verschieben sich nicht. „Auftauen“ verteilt den Rest neu.
 - **OK** überträgt die gekauften Positionen ins Portfolio (bestehende Positionen werden ergänzt, nie überschrieben).
 
+## Benachrichtigungen (🔔 oben rechts)
+
+Einstellbar (jeweils an/aus):
+- **Portfolio: starke Verschlechterung** – z. B. Analysten von „Kaufen“ auf „Verkaufen“ oder Signal fällt um zwei Stufen
+- **Portfolio: deutliche Verbesserung** · **Favoriten mit überwachen**
+- **Take Profit / Stop Loss erreicht** (für im Portfolio generierte Werte)
+- **Markt: neue starke Kaufsignale** – Aktien außerhalb des Portfolios, die neu auf Score ≥ 90, Analysten „Kaufen“ und faire Bewertung steigen
+- **Handelstage Mittwoch & Freitag** – morgens Übersicht über Portfolio, Warnungen, Top-Kaufsignale und Kaufplan
+
+**So funktioniert es:** Der Workflow „Benachrichtigungen senden“ schickt Mo–Fr um 05:31 UTC (≈ 6:30 / 7:30 Uhr)
+einen Web-Push ohne persönliche Daten. Der Service Worker auf dem Handy lädt die neuen Daten, vergleicht sie mit
+dem letzten Stand und deinem Portfolio (das das Gerät nie verlässt) und zeigt nur relevante Hinweise.
+Ohne Push-Einrichtung werden die Hinweise beim Öffnen der Seite angezeigt (Verlauf in den Einstellungen).
+
+**Einmalige Einrichtung** (Repository → Settings → Secrets and variables → Actions):
+1. Secret `VAPID_PRIVATE_KEY` – privater Schlüssel passend zum öffentlichen Schlüssel in `site/app.js`
+2. In der App „Benachrichtigungen aktivieren“ → „Abo-Code kopieren“ → Secret `PUSH_SUBSCRIPTIONS`
+   (mehrere Geräte als JSON-Liste)
+3. Actions → „Benachrichtigungen senden“ → Run workflow mit Typ `test`
+
 ## Lokal ausführen
 
 ```bash

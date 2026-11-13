@@ -143,7 +143,11 @@ let filtered = [];
 
 const store = {
   get(key, fallback) { try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; } catch { return fallback; } },
-  set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ } },
+  set(key, value) {
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+    // mirror to IndexedDB so the service worker can evaluate notifications in the background
+    if (self.SRNotify && key.startsWith('stockratio.')) SRNotify.idb.set(key, JSON.parse(JSON.stringify(value))).catch(() => {});
+  },
 };
 // Favourites: v2 is seeded once from watchlist.txt (stocks flagged "WL"),
 // afterwards it is fully controlled by the star buttons.
@@ -1824,6 +1828,262 @@ function bindLevels() {
   }, true);
 }
 
+/* ---------------------------------------------------------------- settings & notifications */
+
+// public VAPID key (the private one lives only in the GitHub secret VAPID_PRIVATE_KEY)
+const VAPID_PUBLIC = 'BBH2MCm1_9LohVwEWvmARjbUxg2LaM2EazRB_qy5w1vKoTa0FkjzGIuYzcMAZEVPYsDs3P_h0-hTZxbdrhZFzDI';
+const NOTIFY = Object.assign({}, (self.SRNotify || {}).DEFAULTS, store.get('stockratio.notify.v1', {}));
+const saveNotify = () => store.set('stockratio.notify.v1', NOTIFY);
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+let swReg = null;
+
+const NOTIFY_OPTIONS = [
+  ['down', 'Portfolio: starke Verschlechterung', 'z. B. von „Kaufen“ auf „Verkaufen“ oder Signal fällt um zwei Stufen (Positiv → Meiden)'],
+  ['up', 'Portfolio: deutliche Verbesserung', 'z. B. eine Position wird neu zum Kaufkandidaten'],
+  ['favs', 'Favoriten mit überwachen', 'Bewertungsänderungen auch für deine ★-Favoriten melden'],
+  ['tpsl', 'Take Profit / Stop Loss erreicht', 'wenn der Kurs ein im Portfolio generiertes Ziel erreicht'],
+  ['market', 'Markt: neue starke Kaufsignale', 'Aktien außerhalb deines Portfolios, die neu auf Score ≥ 90, Analysten „Kaufen“ und faire Bewertung steigen'],
+  ['tradeday', 'Handelstage Mittwoch & Freitag', 'morgens (ca. 6:30 Uhr) eine Übersicht: Portfolio, Warnungen, Top-Kaufsignale, Kaufplan'],
+];
+
+async function registerServiceWorker() {
+  if (!('serviceWorker' in navigator)) return;
+  try {
+    swReg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' });
+  } catch { swReg = null; }
+}
+
+function repoInfo() {
+  const gh = location.hostname.endsWith('.github.io');
+  const owner = gh ? location.hostname.split('.')[0] : 'Ventrox9';
+  const repo = gh ? (location.pathname.split('/')[1] || 'StockRatio') : 'StockRatio';
+  return { owner, repo, base: `https://github.com/${owner}/${repo}` };
+}
+
+function b64ToBytes(b64) {
+  const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+async function currentSubscription() {
+  if (!pushSupported()) return null;
+  try { const reg = await navigator.serviceWorker.ready; return await reg.pushManager.getSubscription(); } catch { return null; }
+}
+
+async function enableNotifications() {
+  if (!('Notification' in window) || !('serviceWorker' in navigator)) {
+    alert('Dieser Browser unterstützt keine Benachrichtigungen. Nutze Chrome auf Android.');
+    return;
+  }
+  let perm = Notification.permission;
+  if (perm !== 'granted') perm = await Notification.requestPermission();
+  if (perm !== 'granted') {
+    alert('Benachrichtigungen sind blockiert. In Chrome: Symbol links neben der Adresse → Berechtigungen → Benachrichtigungen → Zulassen. Danach erneut versuchen.');
+    renderSettings();
+    return;
+  }
+  NOTIFY.enabled = true;
+  saveNotify();
+  renderSettings(); // switches usable right away; the push connection follows
+  const timeout = (ms) => new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), ms));
+  try {
+    const reg = await Promise.race([navigator.serviceWorker.ready, timeout(10000)]);
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await Promise.race([
+        reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToBytes(VAPID_PUBLIC) }),
+        timeout(20000),
+      ]);
+    }
+    store.set('stockratio.push.sub', sub.toJSON());
+    toast('Benachrichtigungen aktiviert');
+  } catch {
+    toast('Benachrichtigungen aktiv – Push-Verbindung gerade nicht möglich (Hinweise kommen beim Öffnen der Seite)');
+  }
+  renderSettings();
+}
+
+async function disconnectPush() {
+  const sub = await currentSubscription();
+  if (sub) await sub.unsubscribe().catch(() => {});
+  store.set('stockratio.push.sub', null);
+  NOTIFY.enabled = false;
+  saveNotify();
+  toast('Gerät abgemeldet');
+  renderSettings();
+}
+
+async function testNotification() {
+  if (Notification.permission !== 'granted') { await enableNotifications(); if (Notification.permission !== 'granted') return; }
+  const reg = await navigator.serviceWorker.ready;
+  await reg.showNotification('✅ StockRatio: Benachrichtigungen funktionieren', {
+    body: 'So sehen Hinweise zu deinem Portfolio, neuen Kaufsignalen und Handelstagen aus.',
+    icon: 'icons/icon-192.png', badge: 'icons/badge-96.png', tag: 'sr-test', data: { url: '#m=pf' },
+  });
+}
+
+async function mirrorAll() {
+  if (!self.SRNotify) return;
+  const keys = ['stockratio.portfolio.v1', 'stockratio.favs.v2', 'stockratio.pf.levels.v1', 'stockratio.plan.v1', 'stockratio.notify.v1'];
+  await Promise.all(keys.map((k) => SRNotify.idb.set(k, store.get(k, null)).catch(() => {})));
+}
+
+// on every visit: compare today's data with the last check (also works without push)
+async function runLocalCheck() {
+  if (!self.SRNotify || !('indexedDB' in self) || !DATA) return;
+  try {
+    await mirrorAll();
+    const { notes } = await SRNotify.check(DATA, { type: 'update' });
+    if (notes.length) toast(`🔔 ${notes.length} neue${notes.length === 1 ? 'r Hinweis' : ' Hinweise'} – siehe Glocke oben`);
+    updateNotifyDot();
+  } catch { /* storage not available */ }
+}
+
+async function updateNotifyDot() {
+  try {
+    const hist = (await SRNotify.idb.get('notify.history')) || [];
+    const seen = store.get('stockratio.notify.seen', '');
+    $('#notifyDot').hidden = !(hist[0] && hist[0].at > seen);
+  } catch { /* ignore */ }
+}
+
+async function renderSettings() {
+  const body = $('#settingsBody');
+  const supported = pushSupported();
+  const perm = 'Notification' in window ? Notification.permission : 'unsupported';
+  const sub = await currentSubscription();
+  const active = NOTIFY.enabled && perm === 'granted';
+  const hist = self.SRNotify ? ((await SRNotify.idb.get('notify.history').catch(() => [])) || []) : [];
+  const { base } = repoInfo();
+  const permTxt = { granted: '✓ erlaubt', denied: '✕ blockiert', default: 'noch nicht gefragt', unsupported: 'nicht unterstützt' }[perm];
+  const fmt = (iso) => new Date(iso).toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+  body.innerHTML = `
+    <section class="set-sec">
+      <h3>🔔 Benachrichtigungen</h3>
+      ${!supported ? '<p class="set-warn">Dieser Browser unterstützt keine Push-Benachrichtigungen. Auf Android funktioniert es mit Chrome.</p>' : ''}
+      <div class="set-status">
+        <div><small>Erlaubnis im Browser</small><b>${permTxt}</b></div>
+        <div><small>Push-Verbindung</small><b>${sub ? '✓ verbunden' : '– nicht verbunden'}</b></div>
+      </div>
+      ${active ? `
+        <label class="sw master"><input type="checkbox" data-nset="enabled" checked><span class="sw-ui"></span>
+          <span class="sw-txt"><b>Benachrichtigungen an</b><small>Alle Hinweise vorübergehend aus- und wieder einschalten</small></span></label>`
+      : `<button class="btn primary set-enable" data-set-act="enable" ${supported ? '' : 'disabled'}>🔔 Benachrichtigungen aktivieren</button>`}
+      <div class="set-opts ${active ? '' : 'off'}">
+        ${NOTIFY_OPTIONS.map(([k, t, d]) => `<label class="sw"><input type="checkbox" data-nset="${k}" ${NOTIFY[k] ? 'checked' : ''} ${active ? '' : 'disabled'}><span class="sw-ui"></span>
+          <span class="sw-txt"><b>${t}</b><small>${d}</small></span></label>`).join('')}
+      </div>
+      ${active ? `<div class="set-row"><button class="btn" data-set-act="test">Test-Benachrichtigung</button>
+        ${sub ? '<button class="btn ghost" data-set-act="disconnect">Gerät abmelden</button>' : ''}</div>` : ''}
+    </section>
+
+    <section class="set-sec">
+      <h3>📲 Push auch bei geschlossener App (einmalige Einrichtung)</h3>
+      <p class="muted">Damit dein Handy auch Hinweise bekommt, wenn die Seite geschlossen ist, schickt GitHub jeden Werktag morgens einen Weckruf.
+        Die Prüfung selbst passiert auf deinem Gerät – dein Portfolio verlässt es nie. Ohne diese Einrichtung bekommst du die Hinweise beim Öffnen der Seite.</p>
+      <ol class="set-steps">
+        <li>Oben <b>„Benachrichtigungen aktivieren“</b> und erlauben.</li>
+        <li><button class="btn" data-set-act="copy" ${sub ? '' : 'disabled'}>Abo-Code kopieren</button>
+          und auf GitHub als Secret <code>PUSH_SUBSCRIPTIONS</code> speichern:
+          <a href="${base}/settings/secrets/actions/new" target="_blank" rel="noopener">Secret anlegen ↗</a></li>
+        <li>Einmalig zusätzlich das Secret <code>VAPID_PRIVATE_KEY</code> (privater Schlüssel) anlegen.</li>
+        <li>Testen: <a href="${base}/actions/workflows/notify.yml" target="_blank" rel="noopener">Actions → „Benachrichtigungen senden“ ↗</a>
+          → <i>Run workflow</i> mit Typ <code>test</code>.</li>
+      </ol>
+      <p class="muted small">Mehrere Geräte: Codes als Liste eintragen – <code>[Code1, Code2]</code>. Nach „Gerät abmelden“ entsteht beim nächsten Aktivieren ein neuer Code.</p>
+    </section>
+
+    <section class="set-sec">
+      <h3>🕑 Verlauf</h3>
+      ${hist.length ? `<ul class="set-hist">${hist.slice(0, 12).map((h) => `<li><a href="${esc(h.url || '#')}" data-set-close-link><b>${esc(h.title)}</b><span>${esc(h.body)}</span><small>${fmt(h.at)}</small></a></li>`).join('')}</ul>`
+      : '<p class="muted">Noch keine Hinweise. Die erste Prüfung legt den Vergleichsstand an – ab dem nächsten Datenupdate werden Änderungen gemeldet.</p>'}
+    </section>
+
+    <section class="set-sec">
+      <h3>💱 Broker</h3>
+      ${brokerSelect()}
+      <p class="muted small">Begrenzt Take Profits auf Werte, die dein Broker annimmt (Revolut: max. 150 % des aktuellen Kurses).</p>
+    </section>
+
+    <section class="set-sec">
+      <h3>🏠 Als App installieren</h3>
+      <p class="muted small">Chrome-Menü <b>⋮</b> → <b>„Zum Startbildschirm hinzufügen“</b> – dann öffnet StockRatio wie eine App.</p>
+    </section>`;
+}
+
+// jump to a target like "#m=pf&open=plan" or "#q=NVDA" inside the running app
+function applyLink(target) {
+  const hash = String(target || '').replace(/^#/, '');
+  const wantsPlan = new URLSearchParams(hash).get('open') === 'plan';
+  ['#detail', '#settings', '#plan'].forEach((id) => { if ($(id).open) $(id).close(); });
+  history.replaceState(history.state, '', hash ? `#${hash}` : location.pathname + location.search);
+  readHash();
+  $('#q').value = state.q;
+  setMode(state.mode);
+  update({ resetPage: true });
+  if (wantsPlan) openPlan();
+}
+
+function openSettings() {
+  const dlg = $('#settings');
+  renderSettings();
+  if (!dlg.open) { dlg.showModal(); history.pushState({ sr: 'settings' }, ''); }
+  if (self.SRNotify) {
+    SRNotify.idb.get('notify.history').then((h) => {
+      if (h && h[0]) { store.set('stockratio.notify.seen', h[0].at); updateNotifyDot(); }
+    }).catch(() => {});
+  }
+}
+
+function bindSettings() {
+  $('#settingsOpen').addEventListener('click', openSettings);
+  const dlg = $('#settings');
+  dlg.addEventListener('close', () => { if (history.state && history.state.sr === 'settings') history.back(); });
+  window.addEventListener('popstate', () => {
+    if (dlg.open && !(history.state && history.state.sr === 'settings')) dlg.close();
+  });
+  dlg.addEventListener('click', async (e) => {
+    if (e.target === dlg || e.target.closest('[data-set-close]')) { dlg.close(); return; }
+    const link = e.target.closest('[data-set-close-link]');
+    if (link) {
+      e.preventDefault();
+      dlg.close();
+      setTimeout(() => applyLink(link.getAttribute('href') || ''), 120); // after the dialog's history entry is gone
+      return;
+    }
+    const act = e.target.closest('[data-set-act]');
+    if (!act) return;
+    const a = act.dataset.setAct;
+    if (a === 'enable') await enableNotifications();
+    if (a === 'test') await testNotification();
+    if (a === 'disconnect' && confirm('Push-Verbindung für dieses Gerät beenden? Danach musst du einen neuen Abo-Code bei GitHub hinterlegen.')) await disconnectPush();
+    if (a === 'copy') {
+      const sub = await currentSubscription();
+      if (!sub) return;
+      const code = JSON.stringify(sub.toJSON());
+      if (navigator.clipboard) navigator.clipboard.writeText(code).then(() => toast('Abo-Code kopiert'), () => prompt('Abo-Code:', code));
+      else prompt('Abo-Code:', code);
+    }
+  });
+  dlg.addEventListener('change', async (e) => {
+    const t = e.target.closest('[data-nset]');
+    if (!t) return;
+    const key = t.dataset.nset;
+    if (key === 'enabled' && t.checked && Notification.permission !== 'granted') { await enableNotifications(); return; }
+    NOTIFY[key] = t.checked;
+    saveNotify();
+    if (key === 'enabled') renderSettings();
+  });
+  // a tap on a notification while the app is open -> the service worker sends the target here
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.addEventListener('message', (e) => {
+      if (e.data && e.data.sr === 'open') applyLink(e.data.url || '');
+    });
+  }
+}
+
 /* ---------------------------------------------------------------- init */
 
 function fillSelects() {
@@ -1857,12 +2117,15 @@ function renderMeta() {
 }
 
 async function init() {
+  const openPlanOnStart = new URLSearchParams(location.hash.slice(1)).get('open') === 'plan';
   const imported = readImportLink();
   readHash();
   bindEvents();
   bindPortfolio();
   bindPlan();
   bindLevels();
+  bindSettings();
+  registerServiceWorker();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
     $('#toggleFilters').setAttribute('aria-expanded', 'true');
@@ -1894,6 +2157,8 @@ async function init() {
   setMode(state.mode, { initial: true });
   refreshPlanUi();
   if (imported) toast('Portfolio und Favoriten wurden übernommen.');
+  if (openPlanOnStart) openPlan();
+  runLocalCheck();
 }
 
 init();

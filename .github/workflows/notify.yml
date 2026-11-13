@@ -1,0 +1,39 @@
+name: Benachrichtigungen senden
+
+on:
+  schedule:
+    # Mo–Fr 05:31 UTC = 06:31 Uhr (Winter) / 07:31 Uhr (Sommer) in Deutschland.
+    # Mi & Fr: Handelstag-Übersicht, sonst nur Prüfung auf Änderungen.
+    - cron: "31 5 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      type:
+        description: "Art der Nachricht"
+        type: choice
+        options: [test, auto, update, tradeday]
+        default: test
+
+permissions:
+  contents: read
+
+jobs:
+  push:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: pywebpush installieren
+        run: pip install pywebpush
+
+      - name: Push senden
+        env:
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          PUSH_SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS }}
+          SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+        run: python -m stockratio.notify --type "${{ inputs.type || 'auto' }}"
