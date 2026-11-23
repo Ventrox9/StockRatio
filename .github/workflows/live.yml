@@ -1,0 +1,67 @@
+name: Kurse & Charts aktualisieren
+
+# Aktuelle Kurse und Chartdaten für alle Aktien – landen im Branch "live-data",
+# die Webseite lädt sie direkt von dort (raw.githubusercontent.com).
+on:
+  schedule:
+    # Europa + USA: alle 15 Minuten von 06:00 bis 21:45 UTC (Xetra/London ab 07:00 bzw. 08:00 Uhr, US-Schluss 21:00 UTC)
+    - cron: "*/15 6-21 * * 1-5"
+    # Schlusskurse USA + Kurs-Historie für die Charts
+    - cron: "20 22 * * 1-5"
+    # Asien/Pazifik (Tokio, Hongkong, Sydney): stündlich
+    - cron: "40 0-5 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      history:
+        description: "Kurs-Historie (1 M – Max) neu laden"
+        type: choice
+        options: [auto, always, never]
+        default: auto
+
+permissions:
+  contents: write
+
+concurrency:
+  group: live-data
+  cancel-in-progress: false
+
+jobs:
+  live:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Letzten Stand aus Branch live-data holen
+        run: |
+          if git fetch --depth=1 origin live-data; then
+            git worktree add --detach live FETCH_HEAD
+          else
+            # erster Lauf: leeres Verzeichnis
+            git worktree add --detach live HEAD
+            git -C live rm -rq .
+          fi
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Abhängigkeiten installieren
+        run: pip install -r requirements.txt
+
+      - name: Kurse & Charts laden
+        env:
+          STOCKS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/stocks.json
+        run: python -m stockratio.live --out live --history "${{ inputs.history || 'auto' }}"
+
+      - name: Veröffentlichen (Branch live-data, nur ein Commit – keine wachsende Historie)
+        working-directory: live
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
+          git checkout -q --orphan live-new
+          git add -A
+          git commit -q -m "Kurse $(date -u +'%Y-%m-%d %H:%M') UTC"
+          git push -q --force origin HEAD:refs/heads/live-data

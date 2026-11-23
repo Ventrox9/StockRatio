@@ -758,7 +758,6 @@ function openDetail(sym) {
   const idxNames = { SP500: 'S&P 500', MSCI: 'MSCI World', WL: 'watchlist.txt' };
   const isEtf = s.type === 'ETF';
   const held = PF.positions.find((p) => p.s === s.s);
-  const heldVal = held ? positionValue(held) : null;
   const tags = [
     isEtf ? 'ETF' : null,
     isEtf && isNum(s.aum) ? `Fondsvolumen ${mcapFmt(s.aum)}` : null,
@@ -814,11 +813,11 @@ function openDetail(sym) {
       <button class="close" aria-label="Schließen" data-close>×</button>
     </div>
     <div class="d-tags">${tags}</div>
-    <div class="d-price">${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small>${isNum(s.mcap) ? ` <small class="muted">· ${mcapFmt(s.mcap)}</small>` : ''}</div>
-    ${held ? `<div class="d-held">Im Portfolio: <b>${money(heldVal)}</b> · ${fmtShares(held.shares)} Stück</div>` : ''}
+    <div class="d-price" id="dPrice">${detailPriceHtml(s)}</div>
     ${s.stale ? `<p class="stale">⚠ Konnte zuletzt nicht aktualisiert werden – Daten vom ${esc(s.stale)}.</p>` : ''}
 
     <div class="d-grid">
+      ${chartCardHtml()}
       ${isEtf ? `<section class="card"><h3>ETF</h3><p class="muted">Für ETFs gibt es keinen StockRatio-Score, kein KGV und keine Analystenbewertung –
         diese Kennzahlen beziehen sich auf einzelne Unternehmen. Angezeigt werden Kurs und Kursentwicklung.</p></section>` : `
       <section class="card lv-${esc(s.label || 'Neutral')}">
@@ -899,6 +898,361 @@ function openDetail(sym) {
     history.pushState({ sr: 'detail' }, '');
   }
   dlg.scrollTop = 0;
+  loadChart(s.s);
+}
+
+/* ---------------------------------------------------------------- live prices & charts */
+// stocks.json (ratios, score) is built once per day. Current prices and chart data are refreshed
+// every 15 minutes during trading hours by the workflow "Kurse & Charts aktualisieren"
+// (stockratio/live.py) and published to the branch live-data, read here via raw.githubusercontent.com.
+const LIVE_BRANCH = 'live-data';
+const LIVE_POLL_MS = 5 * 60 * 1000;
+const LIVE = { t: null, sp52: null, loadedAt: 0, failed: false };
+const liveBase = () => { const { owner, repo } = repoInfo(); return `https://raw.githubusercontent.com/${owner}/${repo}/${LIVE_BRANCH}/`; };
+const liveFile = (sym) => sym.replace(/[^A-Za-z0-9.-]/g, '_') + '.json'; // same rule as file_name() in live.py
+
+async function fetchLive(path, bucketMin = 1) {
+  // raw.githubusercontent.com caches for 5 minutes – a changing query string asks for the newest file
+  const res = await fetch(`${liveBase()}${path}?t=${Math.floor(Date.now() / (bucketMin * 60000))}`, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+const SCALE_WITH_PRICE = ['mcap', 'pe', 'fpe', 'peg', 'pb', 'ps']; // positive values only (negative = loss)
+const SCALE_AGAINST_PRICE = ['divY', 'fcfY'];
+const BASE_KEYS = ['px', 'd1', 'up', 'ma200', 'hi52', 'r52', 'rel52', ...SCALE_WITH_PRICE, ...SCALE_AGAINST_PRICE];
+
+// Moves the price-dependent ratios of a stock to the live price (score & signal stay as of the daily build).
+function applyQuote(s, q, sp52) {
+  const [px, d1, t, hi, , yearAgo] = q;
+  if (!isNum(px) || px <= 0) return;
+  if (!s._base) s._base = Object.fromEntries(BASE_KEYS.map((k) => [k, s[k]]));
+  const b = s._base;
+  s.px = px;
+  s.pxT = t;
+  if (isNum(d1)) s.d1 = d1;
+  if (!isNum(b.px) || b.px <= 0) return;
+  const r = px / b.px;
+  for (const k of SCALE_WITH_PRICE) if (isNum(b[k]) && b[k] > 0) s[k] = b[k] * r;
+  for (const k of SCALE_AGAINST_PRICE) if (isNum(b[k])) s[k] = b[k] / r;
+  if (isNum(s.tgt)) s.up = s.tgt / px - 1;
+  if (isNum(b.ma200)) s.ma200 = (1 + b.ma200) * r - 1;
+  const high = isNum(hi) ? hi : isNum(b.hi52) ? b.px / (1 + b.hi52) : null;
+  if (high) s.hi52 = Math.min(0, px / Math.max(high, px) - 1);
+  // 52 weeks: from the close one year ago (same as the "1 J" chart), else moved along with the price
+  if (isNum(yearAgo) && yearAgo > 0) s.r52 = px / yearAgo - 1;
+  else if (isNum(b.r52)) s.r52 = (1 + b.r52) * r - 1;
+  if (isNum(s.r52) && isNum(sp52)) s.rel52 = (1 + s.r52) / (1 + sp52) - 1;
+}
+
+async function loadLive({ rerender = true } = {}) {
+  let data;
+  try {
+    data = await fetchLive('quotes.json');
+  } catch {
+    LIVE.failed = true;
+    return;
+  }
+  LIVE.failed = false;
+  LIVE.loadedAt = Date.now();
+  const generated = Date.parse(DATA.generated) || 0;
+  let applied = 0;
+  for (const [sym, q] of Object.entries(data.q || {})) {
+    const s = BYSYM[sym];
+    // a quote that is clearly older than the daily data (e.g. the live job failed) is ignored
+    if (!s || !isNum(q[2]) || q[2] * 1000 < generated - 12 * 3600e3) continue;
+    applyQuote(s, q, data.sp52);
+    applied++;
+  }
+  if (!applied) return;
+  LIVE.t = data.t;
+  LIVE.index = (data.q || {})['^GSPC'] || null;
+  if (isNum(data.sp52)) { LIVE.sp52 = data.sp52; DATA.sp500_52w = data.sp52; }
+  if (!rerender) return;
+  renderMeta();
+  if (state.mode === 'portfolio') renderPortfolio();
+  else update({ resetPage: false });
+  if ($('#plan').open) renderPlan();
+  const dlg = $('#detail');
+  if (dlg.open && CHART.sym) refreshDetailPrice(BYSYM[CHART.sym]);
+}
+
+function startLivePolling() {
+  setInterval(() => { if (document.visibilityState === 'visible') loadLive(); }, LIVE_POLL_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && Date.now() - LIVE.loadedAt > 60000) loadLive();
+  });
+}
+
+const timeDe = (sec, withDate = true) => {
+  const d = new Date(sec * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  const time = d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  if (!withDate || today) return `${today && withDate ? 'heute ' : ''}${time}`;
+  return `${d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}. ${time}`.replace('.. ', '. ');
+};
+
+function pxStampHtml(s) {
+  if (!isNum(s.pxT)) return `<span class="muted">Schlusskurs laut Tagesdaten</span>`;
+  const ageMin = (Date.now() / 1000 - s.pxT) / 60;
+  const fresh = ageMin < 30;
+  return `<span class="px-stamp${fresh ? ' fresh' : ''}">${fresh ? '<i></i>' : ''}Kurs von ${esc(timeDe(s.pxT))} Uhr${s.ex ? ' · ' + esc(s.ex) : ''}</span>`;
+}
+
+function detailPriceHtml(s) {
+  const held = PF.positions.find((p) => p.s === s.s);
+  return `${priceFmt(s)} <small>${pct(s.d1, 2, true, true)} heute</small>${isNum(s.mcap) ? ` <small class="muted">· ${mcapFmt(s.mcap)}</small>` : ''}
+    <div class="d-stamp">${pxStampHtml(s)}</div>
+    ${held ? `<div class="d-held">Im Portfolio: <b>${money(positionValue(held))}</b> · ${fmtShares(held.shares)} Stück</div>` : ''}`;
+}
+
+function refreshDetailPrice(s) {
+  const el = $('#dPrice');
+  if (!s || !el) return;
+  el.innerHTML = detailPriceHtml(s);
+  // the chart's last point follows the live price
+  if (CHART.raw) renderChart();
+}
+
+/* ---- chart ---- */
+const RANGES = [
+  ['1d', '1 T', 'intraday'], ['5d', '5 T', 'intraday'], ['1m', '1 M', 'history'], ['6m', '6 M', 'history'],
+  ['ytd', 'YTD', 'history'], ['1y', '1 J', 'history'], ['5y', '5 J', 'history'], ['max', 'Max', 'history'],
+];
+const RANGE_NAMES = { '1d': 'heute', '5d': '5 Tage', '1m': '1 Monat', '6m': '6 Monate', ytd: 'seit Jahresbeginn', '1y': '1 Jahr', '5y': '5 Jahre', max: 'gesamt' };
+const CHART_RANGE_KEY = 'stockratio.chart.range';
+const CHART = { sym: null, range: store.get(CHART_RANGE_KEY, '1d'), raw: null, cache: {} };
+if (!RANGES.some((r) => r[0] === CHART.range)) CHART.range = '1d';
+
+function decodeSeries(x) {
+  if (!x || !Array.isArray(x.c) || !x.c.length) return null;
+  const pts = [];
+  let t = x.s;
+  x.c.forEach((c, i) => { if (i) t += x.d[i - 1]; pts.push([t, c]); });
+  return { pts, pc: x.pc, a: x.a, b: x.b };
+}
+
+async function loadChartFile(kind, sym) {
+  const key = `${kind}/${sym}`;
+  const hit = CHART.cache[key];
+  if (hit && Date.now() - hit.at < (kind === 'i' ? 5 : 60) * 60000) return hit.data;
+  const data = await fetchLive(`${kind}/${liveFile(sym)}`, kind === 'i' ? 1 : 30);
+  CHART.cache[key] = { at: Date.now(), data };
+  return data;
+}
+
+// points + reference price ("base") for the selected range, with the live price as last point
+function chartSeries(range, s) {
+  const raw = CHART.raw || {};
+  const src = range === '1d' || range === '5d' ? raw.i && raw.i[range]
+    : range === '5y' || range === 'max' ? raw.h && raw.h[range] : raw.h && raw.h['1y'];
+  const ser = decodeSeries(src);
+  if (!ser) return null;
+  let pts = ser.pts.slice();
+  let base = isNum(ser.pc) ? ser.pc : null;
+  if (['1m', '6m', 'ytd'].includes(range)) {
+    const d = new Date();
+    const cut = range === 'ytd' ? new Date(d.getFullYear(), 0, 1)
+      : new Date(d.getFullYear(), d.getMonth() - (range === '1m' ? 1 : 6), d.getDate());
+    const cutSec = cut.getTime() / 1000;
+    const before = pts.filter((p) => p[0] < cutSec);
+    pts = pts.filter((p) => p[0] >= cutSec);
+    base = before.length ? before[before.length - 1][1] : base;
+  }
+  if (range === '1y') { // last close at least 365 days ago – like the 52-week performance
+    const old = pts.filter((p) => p[0] <= Date.now() / 1000 - 365 * 86400);
+    if (old.length) base = old[old.length - 1][1];
+  }
+  if (range === 'max') base = null;
+  // live price: replaces the current period's point or is appended
+  if (s && isNum(s.px) && isNum(s.pxT) && pts.length) {
+    const last = pts[pts.length - 1];
+    const gaps = pts.slice(1).map((p, i) => p[0] - pts[i][0]).sort((a, b) => a - b);
+    const step = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 86400;
+    const intraday = range === '1d' || range === '5d';
+    if (s.pxT > last[0]) {
+      if (!intraday && s.pxT - last[0] < 0.9 * step) pts[pts.length - 1] = [last[0], s.px];
+      else pts.push([s.pxT, s.px]);
+    }
+  }
+  if (!pts.length) return null;
+  if (!isNum(base)) base = pts[0][1];
+  return { pts, base, a: range === '1d' ? ser.a : null, b: range === '1d' ? ser.b : null };
+}
+
+const axisDate = (sec, range) => {
+  const d = new Date(sec * 1000);
+  if (range === '1d') return d.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+  if (range === '5d') return d.toLocaleDateString('de-DE', { weekday: 'short' });
+  if (range === '1m' || range === '6m' || range === 'ytd') return d.toLocaleDateString('de-DE', { day: 'numeric', month: 'short' });
+  if (range === '1y') return d.toLocaleDateString('de-DE', { month: 'short', year: '2-digit' });
+  return d.toLocaleDateString('de-DE', { year: 'numeric' });
+};
+const tipDate = (sec, range) => {
+  const d = new Date(sec * 1000);
+  if (range === '1d' || range === '5d') return d.toLocaleString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+  if (range === '5y' || range === 'max') return d.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) + (range === 'max' ? ' (Monat)' : ' (Woche)');
+  return d.toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: 'numeric' });
+};
+const pxNum = (v) => NF[Math.abs(v) >= 1000 ? 0 : 2].format(v);
+
+function niceTicks(lo, hi, n = 4) {
+  const span = hi - lo || Math.abs(hi) || 1;
+  const raw = span / n;
+  const mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map((m) => m * mag).find((m) => m >= raw);
+  const out = [];
+  for (let i = Math.ceil(lo / step); i * step <= hi + 1e-9; i++) out.push(i * step || 0);
+  return { ticks: out, digits: step >= 1 ? 0 : step >= 0.1 ? 1 : 2 };
+}
+
+function chartSummaryHtml(s, ser, range, point = null) {
+  const v = point ? point[1] : ser.pts[ser.pts.length - 1][1];
+  const ch = v - ser.base, rel = ser.base ? v / ser.base - 1 : null;
+  const cls = ch > 0 ? 'up' : ch < 0 ? 'down' : '';
+  const label = point ? tipDate(point[0], range) : RANGE_NAMES[range];
+  return `<b>${pxNum(v)} <span class="tk">${esc(s.cur || '')}</span></b>
+    <span class="${cls}">${ch > 0 ? '+' : ch < 0 ? '−' : ''}${pxNum(Math.abs(ch))} (${pct(rel, 2, true)})</span>
+    <span class="muted">${esc(label)}</span>`;
+}
+
+function renderChart() {
+  const box = $('#chartBox');
+  const s = BYSYM[CHART.sym];
+  if (!box || !s) return;
+  const range = CHART.range;
+  document.querySelectorAll('#chartRanges button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.range === range)));
+  const ser = chartSeries(range, s);
+  const sum = $('#chartSum');
+  if (!ser) {
+    sum.innerHTML = '';
+    box.innerHTML = `<p class="chart-msg">${CHART.loading ? 'Chart wird geladen …' : CHART.error || 'Für diesen Zeitraum gibt es keine Kursdaten.'}</p>`;
+    return;
+  }
+  sum.innerHTML = chartSummaryHtml(s, ser, range);
+
+  const W = Math.max(280, Math.round(box.clientWidth || 600));
+  const H = isMobile() ? 190 : 230;
+  const pad = { l: 4, r: 52, t: 10, b: 24 };
+  const { pts, base } = ser;
+  const vals = pts.map((p) => p[1]);
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  // reference line (previous close) only when it doesn't squeeze the curve into a thin band
+  const showBase = (range === '1d' || range === '5d') && base >= lo - (hi - lo) * 0.6 && base <= hi + (hi - lo) * 0.6;
+  if (showBase) { lo = Math.min(lo, base); hi = Math.max(hi, base); }
+  if (hi === lo) { hi += Math.abs(hi) * 0.01 || 1; lo -= Math.abs(lo) * 0.01 || 1; }
+  const m = (hi - lo) * 0.08; lo -= m; hi += m;
+  // 1 T with known session: time axis over the whole session; otherwise one step per point (no gaps for nights/weekends)
+  const timeAxis = range === '1d' && ser.a && ser.b;
+  const n = pts.length;
+  const x = timeAxis
+    ? (i) => pad.l + ((pts[i][0] - ser.a) / (ser.b - ser.a)) * (W - pad.l - pad.r)
+    : (i) => pad.l + (n === 1 ? 0.5 : i / (n - 1)) * (W - pad.l - pad.r);
+  const y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (H - pad.t - pad.b);
+  const up = vals[n - 1] >= base;
+  const color = up ? 'var(--pos)' : 'var(--neg)';
+  const line = pts.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p[1]).toFixed(1)}`).join('');
+  const area = `${line}L${x(n - 1).toFixed(1)},${H - pad.b}L${x(0).toFixed(1)},${H - pad.b}Z`;
+  const { ticks: yTicks, digits } = niceTicks(Math.max(lo, 0), hi, H < 200 ? 3 : 4);
+  const grid = yTicks.map((v) => `<line class="ch-grid" x1="${pad.l}" x2="${W - pad.r}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+    <text class="ch-ax" x="${W - pad.r + 6}" y="${(y(v) + 4).toFixed(1)}">${NF[digits].format(v)}</text>`).join('');
+  // x labels: ~4 evenly spaced, de-duplicated
+  const xIdx = [];
+  if (timeAxis) {
+    const span = ser.b - ser.a, stepH = span > 8 * 3600 ? 2 : 1;
+    const first = new Date(ser.a * 1000); first.setMinutes(0, 0, 0);
+    for (let t = first.getTime() / 1000 + 3600; t < ser.b; t += stepH * 3600) {
+      const xx = pad.l + ((t - ser.a) / span) * (W - pad.l - pad.r);
+      xIdx.push([xx, axisDate(t, range)]);
+    }
+  } else {
+    const k = Math.min(4, n);
+    let prev = '';
+    for (let j = 0; j < k; j++) {
+      const i = Math.round(((j + 0.5) / k) * (n - 1));
+      const lab = axisDate(pts[i][0], range);
+      if (lab !== prev) xIdx.push([x(i), lab]);
+      prev = lab;
+    }
+  }
+  const xLabels = xIdx.map(([xx, lab]) => `<text class="ch-ax" x="${xx.toFixed(1)}" y="${H - 6}" text-anchor="middle">${esc(lab)}</text>`).join('');
+  const baseLine = showBase ? `<line class="ch-base" x1="${pad.l}" x2="${W - pad.r}" y1="${y(base).toFixed(1)}" y2="${y(base).toFixed(1)}"/>` : '';
+  const lastX = x(n - 1), lastY = y(vals[n - 1]);
+  box.innerHTML = `<svg class="chart" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img"
+      aria-label="Kursverlauf ${esc(s.n)} – ${esc(RANGE_NAMES[range])}: ${pct(vals[n - 1] / base - 1, 1, true)}">
+    <defs><linearGradient id="chFill" x1="0" x2="0" y1="0" y2="1">
+      <stop offset="0" stop-color="${color}" stop-opacity=".18"/><stop offset="1" stop-color="${color}" stop-opacity="0"/></linearGradient></defs>
+    ${grid}${baseLine}
+    <path d="${area}" fill="url(#chFill)"/>
+    <path d="${line}" fill="none" stroke="${color}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+    <circle cx="${lastX.toFixed(1)}" cy="${lastY.toFixed(1)}" r="4" fill="${color}" stroke="var(--surface)" stroke-width="2"/>
+    ${xLabels}
+    <g class="ch-hover" hidden><line class="ch-cross" y1="${pad.t}" y2="${H - pad.b}"/><circle r="5" fill="${color}" stroke="var(--surface)" stroke-width="2"/></g>
+  </svg>${range === '1d' || range === '5d' ? `<span class="ch-legend">${showBase ? '<i></i>' : ''}${range === '1d' ? 'Vortagesschluss' : 'Schluss vor 5 Tagen'} ${pxNum(base)}</span>` : ''}`;
+
+  // crosshair: nearest point to the pointer
+  const svg = box.querySelector('svg');
+  const hover = svg.querySelector('.ch-hover');
+  const xs = pts.map((_, i) => x(i));
+  const move = (ev) => {
+    const rect = svg.getBoundingClientRect();
+    const px = ((ev.clientX - rect.left) / rect.width) * W;
+    let best = 0;
+    for (let i = 1; i < n; i++) if (Math.abs(xs[i] - px) < Math.abs(xs[best] - px)) best = i;
+    hover.hidden = false;
+    hover.querySelector('line').setAttribute('x1', xs[best]);
+    hover.querySelector('line').setAttribute('x2', xs[best]);
+    hover.querySelector('circle').setAttribute('cx', xs[best]);
+    hover.querySelector('circle').setAttribute('cy', y(pts[best][1]));
+    sum.innerHTML = chartSummaryHtml(s, ser, range, pts[best]);
+  };
+  const leave = () => { hover.hidden = true; sum.innerHTML = chartSummaryHtml(s, ser, range); };
+  svg.addEventListener('pointermove', move);
+  svg.addEventListener('pointerdown', move);
+  svg.addEventListener('pointerleave', leave);
+  svg.addEventListener('pointercancel', leave);
+}
+
+async function loadChart(sym) {
+  CHART.sym = sym;
+  CHART.raw = {};
+  CHART.error = null;
+  CHART.loading = true;
+  renderChart();
+  const kinds = [['i', 'intraday'], ['h', 'history']];
+  const results = await Promise.allSettled(kinds.map(([k]) => loadChartFile(k, sym)));
+  if (CHART.sym !== sym) return; // another stock was opened meanwhile
+  CHART.loading = false;
+  results.forEach((r, j) => { if (r.status === 'fulfilled') CHART.raw[kinds[j][0]] = r.value; });
+  if (results.every((r) => r.status === 'rejected')) {
+    CHART.error = LIVE.failed || !LIVE.t
+      ? 'Chartdaten sind noch nicht verfügbar – sie entstehen beim nächsten Lauf des Workflows „Kurse &amp; Charts aktualisieren“.'
+      : 'Für diese Aktie gibt es keine Chartdaten.';
+  }
+  renderChart();
+}
+
+const chartCardHtml = () => `<section class="card full chart-card">
+    <div class="ch-head"><div class="ch-sum" id="chartSum" aria-live="polite"></div></div>
+    <div class="ch-ranges seg" id="chartRanges" role="tablist" aria-label="Zeitraum">
+      ${RANGES.map(([id, label]) => `<button type="button" role="tab" data-range="${id}" aria-selected="${id === CHART.range}">${label}</button>`).join('')}
+    </div>
+    <div class="ch-box" id="chartBox"></div>
+  </section>`;
+
+function bindChart() {
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('#chartRanges [data-range]');
+    if (!b) return;
+    CHART.range = b.dataset.range;
+    store.set(CHART_RANGE_KEY, CHART.range);
+    renderChart();
+  });
+  let resizeTimer;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if ($('#detail').open && CHART.sym) renderChart(); }, 150);
+  });
 }
 
 /* ---------------------------------------------------------------- export */
@@ -1023,6 +1377,7 @@ function bindEvents() {
     writeHash(); // the previous history entry may carry an older hash
   });
   $('#detail').addEventListener('close', () => {
+    CHART.sym = null;
     if (history.state && history.state.sr === 'detail') history.back();
   });
 
@@ -2616,10 +2971,13 @@ function renderMeta() {
   const d = new Date(DATA.generated);
   const when = isNaN(d) ? DATA.generated : d.toLocaleString('de-DE', { dateStyle: 'medium', timeStyle: 'short' });
   const short = isNaN(d) ? '' : d.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-  $('#meta').innerHTML = `<span class="meta-long">Datenstand <b>${esc(when)}</b> · ${STOCKS.length.toLocaleString('de-DE')} Aktien<span class="meta-src"> · Quelle: ${esc(DATA.source)}</span><br>
-    S&amp;P 500 (52 W): <b>${pct(DATA.sp500_52w, 1, true, true)}</b> · <a href="#erklaerung" style="color:inherit">Erklärungen</a></span>
-    <span class="meta-short">Stand <b>${esc(short)}</b><br>S&amp;P 500 52 W <b>${pct(DATA.sp500_52w, 1, true, true)}</b></span>`;
-  $('#metaMob').innerHTML = `${esc(short.replace(',', ''))} · S&amp;P 500 1 J. <b>${pct(DATA.sp500_52w, 1, true, true)}</b>`;
+  const lt = LIVE.t ? new Date(LIVE.t) : null;
+  const liveShort = lt && !isNaN(lt) ? lt.toLocaleString('de-DE', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }).replace(',', '') : '';
+  const idx = LIVE.index && isNum(LIVE.index[1]) ? ` · heute <b>${pct(LIVE.index[1], 1, true, true)}</b>` : '';
+  $('#meta').innerHTML = `<span class="meta-long">${liveShort ? `Kurse <b>${esc(liveShort)}</b> · Kennzahlen ${esc(short.replace(',', ''))}` : `Datenstand <b>${esc(when)}</b>`} · ${STOCKS.length.toLocaleString('de-DE')} Aktien<span class="meta-src"> · Quelle: ${esc(DATA.source)}</span><br>
+    S&amp;P 500 (52 W): <b>${pct(DATA.sp500_52w, 1, true, true)}</b>${idx} · <a href="#erklaerung" style="color:inherit">Erklärungen</a></span>
+    <span class="meta-short">${liveShort ? 'Kurse' : 'Stand'} <b>${esc(liveShort || short)}</b><br>S&amp;P 500 52 W <b>${pct(DATA.sp500_52w, 1, true, true)}</b></span>`;
+  $('#metaMob').innerHTML = `${esc(liveShort || short.replace(',', ''))} · S&amp;P 500 ${LIVE.index && isNum(LIVE.index[1]) ? `heute <b>${pct(LIVE.index[1], 1, true, true)}</b>` : `1 J. <b>${pct(DATA.sp500_52w, 1, true, true)}</b>`}`;
   const w = DATA.weights || {};
   const names = { val: 'Bewertung (Forward-KGV, PEG, KGV, EV/EBITDA, FCF-Rendite – relativ zur Branche)', qual: 'Qualität (ROE, Margen, Verschuldung)', grow: 'Wachstum (Umsatz, Gewinn, erwartetes EPS-Wachstum)', ana: 'Analysten (Konsens, Kursziel-Potenzial, Gewinnrevisionen)', mom: 'Momentum (Performance vs. S&P 500, 200-Tage-Linie)' };
   $('#weightsList').innerHTML = Object.entries(w).map(([k, v]) => `<li><b>${NF[0].format(v * 100)} %</b> ${names[k] || k}</li>`).join('');
@@ -2635,6 +2993,7 @@ async function init() {
   bindLevels();
   bindSettings();
   bindTheme();
+  bindChart();
   registerServiceWorker();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
@@ -2670,6 +3029,7 @@ async function init() {
   if (imported) toast('Portfolio und Favoriten wurden übernommen.');
   if (openPlanOnStart) openPlan();
   runLocalCheck();
+  loadLive().finally(startLivePolling);
 }
 
 init();

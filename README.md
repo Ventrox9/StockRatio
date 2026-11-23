@@ -10,8 +10,9 @@ nach **KGV, Forward-KGV, PEG** und weiteren Kennzahlen – mit Analysten-Konsens
 Performance gegenüber dem S&P 500 und einem eigenen **StockRatio-Score** (0–100) samt Signal
 (*Kaufkandidat · Positiv · Neutral · Negativ · Meiden*).
 
-Die Daten kommen kostenlos von Yahoo Finance und werden **werktags automatisch** per GitHub Actions
-aktualisiert und auf **GitHub Pages** veröffentlicht. Es gibt keinen Server und keine Kosten.
+Die Daten kommen kostenlos von Yahoo Finance und werden per GitHub Actions automatisch aktualisiert:
+**Kurse und Charts alle 15 Minuten** während der Handelszeiten, Kennzahlen und Score **werktags einmal täglich**.
+Veröffentlicht wird alles auf **GitHub Pages**. Es gibt keinen Server und keine Kosten.
 
 ## Funktionen
 
@@ -23,6 +24,7 @@ aktualisiert und auf **GitHub Pages** veröffentlicht. Es gibt keinen Server und
 | **Momentum** | 52-Wochen-Performance, **Performance vs. S&P 500**, Abstand zur 200-Tage-Linie und zum 52-W-Hoch, Beta |
 | **Score** | Gewichtete Kombination aus Bewertung (30 %), Analysten (25 %), Qualität (20 %), Wachstum (15 %), Momentum (10 %) |
 | **Bedienung** | Suche, Schnellfilter („Günstig & stark“, „Wachstum fair bewertet“, „Value“, „Analysten-Lieblinge“, „Dividende“, „Vorsicht: teuer“), Filter als Tipp-Chips (Signal, Bewertung, Analysten, Index) plus Land/Region, Sektor und Kennzahlen-Grenzen, aktive Filter als entfernbare Chips, ein Sortiermenü („Bester Score“, „Höchstes Kurspotenzial“ …), vier Ansichten, Detailansicht mit Begründung, Favoriten ★, CSV-Export, teilbare Links (Filter stehen in der URL), Handy-tauglich |
+| **Kurse & Chart** | Aktuelle Kurse (alle 15 Min. während der Handelszeiten, mit Uhrzeit des Kurses). In der Detailansicht ein **Kurs-Chart** mit den Zeiträumen **1 T · 5 T · 1 M · 6 M · YTD · 1 J · 5 J · Max**, Fadenkreuz zum Ablesen einzelner Kurse und der Vortagesschluss als Linie |
 | **Darstellung** | Drei Farbschemata – **Dunkel**, **Hell**, **Beige** – oder automatisch nach Gerät (Knopf ◐ oben rechts oder Einstellungen). **Firmenlogos** von financialmodelingprep.com (ersatzweise das Website-Symbol, sonst Initialen); abschaltbar in den Einstellungen |
 
 ### So funktioniert der Score
@@ -46,6 +48,23 @@ Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprog
    Nach ca. 3–5 Minuten ist die Seite erreichbar unter
    `https://<dein-github-name>.github.io/<repo-name>/` (der Link steht auch im Workflow-Lauf).
 3. Danach läuft die Aktualisierung automatisch **Mo–Fr um 22:17 UTC** (nach US-Börsenschluss).
+4. **Kurse & Charts:** *Actions* → „Kurse & Charts aktualisieren“ → *Run workflow* (einmal von Hand, danach automatisch).
+
+## Aktuelle Kurse & Charts
+
+Kennzahlen und Score werden einmal am Tag berechnet – der **Kurs** dagegen wird laufend nachgeladen:
+
+- Der Workflow „Kurse & Charts aktualisieren“ läuft Mo–Fr **alle 15 Minuten von 06:00 bis 21:45 UTC** (Europa + USA),
+  stündlich für Asien/Pazifik und um 22:20 UTC für die US-Schlusskurse. Er lädt für alle Aktien Kurs, Tagesänderung
+  und Chartdaten und legt sie im Branch **`live-data`** ab (nur ein Commit, der jedes Mal ersetzt wird).
+- Die Webseite liest diese Daten direkt (raw.githubusercontent.com) und lädt sie alle 5 Minuten neu, solange sie offen ist.
+- Mit dem Kurs werden auch die **kursabhängigen Kennzahlen** angepasst: KGV, Forward-KGV, PEG, KBV, KUV, Marktkapitalisierung,
+  Dividenden- und FCF-Rendite, Kursziel-Potenzial, Abstand zu 200-Tage-Linie und 52-W-Hoch, 52-Wochen-Performance und
+  „vs. S&P 500“. **Score und Signal** bleiben auf dem Stand der täglichen Berechnung.
+- In der Detailansicht steht die **Uhrzeit des Kurses** (z. B. „Kurs von heute 21:00 Uhr · NasdaqGS“), ein grüner Punkt
+  zeigt einen Kurs jünger als 30 Minuten. US-Kurse von Yahoo sind Echtzeit-Kurse, europäische meist 15 Minuten verzögert.
+- GitHub startet geplante Workflows manchmal einige Minuten später – ein Kurs kann also bis zu ca. 20–30 Minuten alt sein.
+  Für Kurse auf die Sekunde bräuchte es einen eigenen Server bzw. einen kostenpflichtigen Kursdienst.
 
 > Der Workflow veröffentlicht nur vom **Standard-Branch** des Repositories.
 
