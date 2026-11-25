@@ -76,6 +76,7 @@ const NA = '<span class="na">–</span>';
 function num(v, d = 1) { return isNum(v) ? NF[d].format(v) : NA; }
 function pct(v, d = 1, signed = false, colored = false) {
   if (!isNum(v)) return NA;
+  if (Math.abs(v) * 10 ** (d + 2) < 0.5) v = 0; // no "−0,0 %"
   const txt = (signed && v > 0 ? '+' : '') + NF[d].format(v * 100) + ' %';
   if (!colored) return txt;
   return `<span class="${v > 0 ? 'up' : v < 0 ? 'down' : ''}">${txt}</span>`;
@@ -683,6 +684,7 @@ function update({ resetPage = true } = {}) {
 function writeHash() {
   const p = new URLSearchParams();
   if (state.mode === 'portfolio') p.set('m', 'pf');
+  if (state.mode === 'signals') p.set('m', 'sig');
   if (state.q) p.set('q', state.q);
   if (state.syms.length) p.set('syms', state.syms.join(','));
   if (state.preset) p.set('p', state.preset);
@@ -700,7 +702,7 @@ function readHash() {
   const p = new URLSearchParams(location.hash.slice(1));
   state.q = p.get('q') || '';
   state.syms = (p.get('syms') || '').split(',').map((x) => x.trim()).filter(Boolean);
-  state.mode = p.get('m') === 'pf' ? 'portfolio' : 'screener';
+  state.mode = { pf: 'portfolio', sig: 'signals' }[p.get('m')] || 'screener';
   const preset = p.get('p') === 'watch' ? 'fav' : p.get('p');
   state.preset = PRESETS.some((x) => x.id === preset) ? preset : '';
   if (preset === 'top' && !p.get('s')) state.sort = { key: 'score', dir: -1 }; // old "Top-Score" links
@@ -765,6 +767,7 @@ function openDetail(sym) {
     s.cty ? countryDe(s.cty) : null,
     ...(s.idx || []).map((i) => idxNames[i]),
     isNum(s.w) ? `MSCI-Gewicht ${NF[2].format(s.w)} %` : null,
+    ...activeSignals(s.s).map((e) => `Signal ${(SIG_KINDS.find((k) => k[0] === e.k) || [, e.k])[1]} seit ${e.bf ? 'ca. ' : ''}${shortDate(e.d0)}${e.p0 && isNum(s.px) ? ` (${pct(s.px / e.p0 - 1, 1, true)})` : ''}`),
   ].filter(Boolean).map((t) => `<span class="tag">${esc(t)}</span>`).join('');
 
   const bars = PILLARS.map(([key, label]) => {
@@ -971,6 +974,7 @@ async function loadLive({ rerender = true } = {}) {
   if (!rerender) return;
   renderMeta();
   if (state.mode === 'portfolio') renderPortfolio();
+  else if (state.mode === 'signals') renderSignals();
   else update({ resetPage: false });
   if ($('#plan').open) renderPlan();
   const dlg = $('#detail');
@@ -1255,6 +1259,200 @@ function bindChart() {
   });
 }
 
+/* ---------------------------------------------------------------- signal tracking */
+// data/signals.json is written by stockratio/signals.py after every daily build: one episode per
+// stock and signal type (start, entry price, end, highest/lowest close, returns after 7/30/90/180 days).
+// The current return uses the live price.
+const SIG_KEY = 'stockratio.signals.ui.v1';
+const SIG_KINDS = [
+  ['score95', 'Score ≥ 95'],
+  ['strongbuy', 'Starker Kauf', 'Analysten'],
+  ['buy', 'Starkes Kaufsignal'],
+];
+const SIG_HORIZONS = [['7', '1 Woche'], ['30', '1 Monat'], ['90', '3 Monaten'], ['180', '6 Monaten']];
+const SIG = Object.assign({ kind: 'strongbuy', status: 'all', sort: 'new' }, store.get(SIG_KEY, {}), { data: null, loading: null, shown: 30, error: null });
+const saveSig = () => store.set(SIG_KEY, { kind: SIG.kind, status: SIG.status, sort: SIG.sort });
+
+async function loadSignals() {
+  if (SIG.data) return SIG.data;
+  if (!SIG.loading) {
+    SIG.loading = (async () => {
+      const { owner, repo } = repoInfo();
+      const urls = ['data/signals.json', `https://raw.githubusercontent.com/${owner}/${repo}/signals/signals.json`];
+      for (const url of urls) {
+        try {
+          const res = await fetch(url, { cache: 'no-cache' });
+          if (res.ok) { SIG.data = await res.json(); return SIG.data; }
+        } catch { /* next source */ }
+      }
+      SIG.error = 'Noch keine Signal-Daten – sie entstehen beim nächsten Lauf des Workflows „Daten aktualisieren“.';
+      return null;
+    })().finally(() => { SIG.loading = null; });
+  }
+  return SIG.loading;
+}
+
+const daysBetween = (isoA, isoB) => Math.round((Date.parse(isoB) - Date.parse(isoA)) / 86400e3);
+const todayIsoLocal = () => { const d = new Date(); return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
+const shortDate = (iso) => { const [y, m, d] = iso.split('-'); return `${d}.${m}.${y.slice(2)}`; };
+
+// one episode with the current numbers (live price)
+function sigRow(e) {
+  const s = BYSYM[e.s];
+  const px = s && isNum(s.px) && s.cur === e.cur ? s.px : e.last;
+  const ret = isNum(px) && e.p0 ? px / e.p0 - 1 : null;
+  const spNow = LIVE.index && isNum(LIVE.index[0]) ? LIVE.index[0] : SIG.data && SIG.data.sp ? SIG.data.sp.c : null;
+  const spRet = isNum(spNow) && e.sp0 ? spNow / e.sp0 - 1 : null;
+  // highest / lowest close since the signal (incl. today) – only once there is a close after the signal day
+  const hi = isNum(e.hi) ? [e.hi, ret].filter(isNum) : [];
+  const lo = isNum(e.lo) ? [e.lo, ret].filter(isNum) : [];
+  return {
+    e, s, px, ret, spRet,
+    ex: isNum(ret) && isNum(spRet) ? ret - spRet : null,
+    hi: hi.length ? Math.max(...hi) : null,
+    lo: lo.length ? Math.min(...lo) : null,
+    end: e.d1 && e.p1 && e.p0 ? e.p1 / e.p0 - 1 : null,
+    age: daysBetween(e.d0, todayIsoLocal()),
+  };
+}
+
+function sigStatsHtml(rows) {
+  const tiles = SIG_HORIZONS.map(([h, label]) => {
+    const done = rows.filter((r) => isNum(r.e.r[h]));
+    if (!done.length) {
+      const next = rows.map((r) => r.e.d0).sort()[0];
+      const when = next ? new Date(Date.parse(next) + Number(h) * 86400e3) : null;
+      return `<div class="sg-tile empty"><small>Nach ${label}</small><b>–</b>
+        <span class="muted">${when && when > new Date() ? `erste Werte ab ${when.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit' })}` : 'noch keine Signale'}</span></div>`;
+    }
+    const rs = done.map((r) => r.e.r[h]);
+    const win = rs.filter((v) => v > 0).length / rs.length;
+    const avg = rs.reduce((a, b) => a + b, 0) / rs.length;
+    const ex = done.filter((r) => isNum(r.e.rs[h])).map((r) => r.e.r[h] - r.e.rs[h]);
+    const exAvg = ex.length ? ex.reduce((a, b) => a + b, 0) / ex.length : null;
+    const beat = ex.length ? ex.filter((v) => v > 0).length / ex.length : null;
+    return `<div class="sg-tile"><small>Nach ${label}</small>
+      <b class="${win >= 0.5 ? 'up' : 'down'}">${NF[0].format(win * 100)} % <span>im Plus</span></b>
+      <span>Ø ${pct(avg, 1, true, true)} · vs. S&amp;P ${pct(exAvg, 1, true, true)}</span>
+      <span class="muted">${done.length} Signal${done.length === 1 ? '' : 'e'}${beat !== null ? ` · ${NF[0].format(beat * 100)} % besser als S&amp;P` : ''}</span></div>`;
+  }).join('');
+  const open = rows.filter((r) => !r.e.d1 && isNum(r.ret));
+  const openAvg = open.length ? open.reduce((a, r) => a + r.ret, 0) / open.length : null;
+  const all = rows.filter((r) => isNum(r.ret));
+  const allWin = all.length ? all.filter((r) => r.ret > 0).length / all.length : null;
+  return `<div class="sg-now card">
+      <div><small>Signale gesamt</small><b>${rows.length}</b><span class="muted">${open.length} aktiv</span></div>
+      <div><small>Bis heute im Plus</small><b>${allWin !== null ? NF[0].format(allWin * 100) + ' %' : '–'}</b><span class="muted">alle Signale, egal wie alt</span></div>
+      <div><small>Ø aktive Signale</small><b>${pct(openAvg, 1, true, true)}</b><span class="muted">seit Signal</span></div>
+    </div>
+    <div class="sg-tiles">${tiles}</div>`;
+}
+
+function sigItemHtml(r) {
+  const { e, s } = r;
+  const stock = s || { s: e.s, n: e.n || e.s, cur: e.cur };
+  const nowTxt = isNum(r.px) ? `${NF[r.px >= 1000 ? 0 : 2].format(r.px)}` : '–';
+  const p0Txt = e.p0 ? NF[e.p0 >= 1000 ? 0 : 2].format(e.p0) : '–';
+  const status = e.d1
+    ? `<span class="sg-st off">beendet ${shortDate(e.d1)}${isNum(r.end) ? ` (${pct(r.end, 1, true)})` : ''}</span>`
+    : '<span class="sg-st on">aktiv</span>';
+  const horizons = SIG_HORIZONS.filter(([h]) => isNum(e.r[h]))
+    .map(([h, label]) => `<span>${label.replace('Monaten', 'M').replace('Monat', 'M').replace('Woche', 'W')}: ${pct(e.r[h], 1, true, true)}</span>`).join('');
+  const scoreNow = s && isNum(s.score) ? NF[0].format(s.score) : '–';
+  const then = isNum(e.sc0) ? `Score damals ${NF[0].format(e.sc0)} · heute ${scoreNow}` : `Score heute ${scoreNow}`;
+  const age = r.age <= 0 ? 'heute' : r.age === 1 ? 'seit 1 Tag' : `seit ${r.age} Tagen`;
+  return `<article class="sg-item card" data-sym="${esc(e.s)}" tabindex="0">
+    <div class="sg-top">
+      ${logoHtml(stock, 'lg')}
+      <div class="sig-name"><span class="nm">${esc(stock.n)}</span>
+        <span class="tk"><b class="sym">${esc(e.s)}</b> · ${e.bf ? 'ca. ' : ''}${shortDate(e.d0)} (${age})${e.bf ? ' <span class="sg-bf" title="Aus der Analysten-Historie von Yahoo rekonstruiert (Monatswerte)">rückwirkend</span>' : ''}</span></div>
+      <div class="sg-ret ${isNum(r.ret) ? (r.ret >= 0.0005 ? 'up' : r.ret <= -0.0005 ? 'down' : '') : ''}">${isNum(r.ret) ? pct(r.ret, 1, true) : '–'}<small>seit Signal</small></div>
+    </div>
+    <div class="sg-row">
+      <span>${p0Txt} → <b>${nowTxt}</b> <span class="tk">${esc(e.cur || '')}</span></span>${status}
+    </div>
+    <dl class="sg-kv">
+      <div><dt>Max. ↑</dt><dd>${pct(r.hi, 1, true, true)}</dd></div>
+      <div><dt>Max. ↓</dt><dd>${pct(r.lo, 1, true, true)}</dd></div>
+      <div><dt>vs. S&amp;P 500</dt><dd>${pct(r.ex, 1, true, true)}</dd></div>
+    </dl>
+    ${horizons ? `<div class="sg-hz">${horizons}</div>` : ''}
+    <div class="sg-foot muted">${then}</div>
+  </article>`;
+}
+
+async function renderSignals() {
+  const list = $('#sgList');
+  if (!SIG.data) {
+    list.innerHTML = '';
+    $('#sgStats').innerHTML = '';
+    $('#sgEmpty').hidden = false;
+    $('#sgEmpty').textContent = 'Signale werden geladen …';
+    const data = await loadSignals();
+    if (!data) { $('#sgEmpty').textContent = SIG.error; return; }
+  }
+  const d = SIG.data;
+  const eps = d.e || [];
+  $('#sgKinds').innerHTML = SIG_KINDS.map(([k, label, sub]) => {
+    const n = eps.filter((e) => e.k === k && !e.d1).length;
+    return `<button class="chip" role="tab" data-sgkind="${k}" aria-pressed="${k === SIG.kind}">${sub ? `<span class="sub">${sub}:</span> ` : ''}${label}<small>${n} aktiv</small></button>`;
+  }).join('');
+  document.querySelectorAll('#sgStatus [data-sgstatus]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.sgstatus === SIG.status)));
+  $('#sgSort').value = SIG.sort;
+
+  const rows = eps.filter((e) => e.k === SIG.kind).map(sigRow);
+  $('#sgStats').innerHTML = sigStatsHtml(rows);
+  let shown = rows.filter((r) => SIG.status === 'all' || (SIG.status === 'open' ? !r.e.d1 : !!r.e.d1));
+  const val = (r) => (isNum(r.ret) ? r.ret : -Infinity);
+  const sorters = {
+    new: (a, b) => b.e.d0.localeCompare(a.e.d0) || val(b) - val(a),
+    old: (a, b) => a.e.d0.localeCompare(b.e.d0) || val(b) - val(a),
+    best: (a, b) => val(b) - val(a),
+    worst: (a, b) => (isNum(a.ret) ? a.ret : Infinity) - (isNum(b.ret) ? b.ret : Infinity),
+  };
+  shown = shown.sort(sorters[SIG.sort] || sorters.new);
+  $('#sgCount').textContent = `${shown.length.toLocaleString('de-DE')} Signal${shown.length === 1 ? '' : 'e'}`;
+  list.innerHTML = shown.slice(0, SIG.shown).map(sigItemHtml).join('');
+  const rest = shown.length - Math.min(SIG.shown, shown.length);
+  $('#sgMore').hidden = rest <= 0;
+  $('#sgMore').textContent = `Weitere ${Math.min(30, rest)} anzeigen (noch ${rest})`;
+  $('#sgEmpty').hidden = shown.length > 0;
+  $('#sgEmpty').textContent = 'Keine Signale in dieser Auswahl.';
+  const since = d.since ? new Date(d.since).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '';
+  $('#sgSinceNote').innerHTML = `Erfasst seit <b>${esc(since)}</b>, aktualisiert einmal täglich nach US-Börsenschluss (letzter Stand ${d.day ? shortDate(d.day) : '–'}).
+    Signale „Starker Kauf“ der drei Monate davor wurden aus Yahoos monatlicher Analysten-Historie <b>rückwirkend</b> ermittelt
+    (Startdatum auf den Monat genau). Score-Signale lassen sich nicht rekonstruieren und zählen erst ab dem Start.`;
+}
+
+// active signals of one stock (detail view)
+function activeSignals(sym) {
+  if (!SIG.data) return [];
+  return (SIG.data.e || []).filter((e) => e.s === sym && !e.d1);
+}
+
+function bindSignals() {
+  $('#sgKinds').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sgkind]');
+    if (!b) return;
+    SIG.kind = b.dataset.sgkind; SIG.shown = 30; saveSig(); renderSignals();
+  });
+  $('#sgStatus').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-sgstatus]');
+    if (!b) return;
+    SIG.status = b.dataset.sgstatus; SIG.shown = 30; saveSig(); renderSignals();
+  });
+  $('#sgSort').addEventListener('change', (e) => { SIG.sort = e.target.value; saveSig(); renderSignals(); });
+  $('#sgMore').addEventListener('click', () => { SIG.shown += 30; renderSignals(); });
+  $('#sgList').addEventListener('click', (e) => {
+    const card = e.target.closest('[data-sym]');
+    if (card && BYSYM[card.dataset.sym]) openDetail(card.dataset.sym);
+  });
+  $('#sgList').addEventListener('keydown', (e) => {
+    const card = e.target.closest('[data-sym]');
+    if (card && e.key === 'Enter' && BYSYM[card.dataset.sym]) openDetail(card.dataset.sym);
+  });
+}
+
 /* ---------------------------------------------------------------- export */
 
 function exportCsv() {
@@ -1526,12 +1724,15 @@ function parseAmount(text) {
 }
 
 function setMode(mode, { initial = false } = {}) {
-  state.mode = mode === 'portfolio' ? 'portfolio' : 'screener';
-  const isPf = state.mode === 'portfolio';
-  $('#screenerView').hidden = isPf;
+  state.mode = ['portfolio', 'signals'].includes(mode) ? mode : 'screener';
+  const isPf = state.mode === 'portfolio', isSig = state.mode === 'signals';
+  $('#screenerView').hidden = isPf || isSig;
   $('#portfolioView').hidden = !isPf;
+  $('#signalsView').hidden = !isSig;
+  $('#erklaerung').hidden = isSig;
   document.querySelectorAll('#modes [data-mode]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.mode === state.mode)));
   if (isPf) renderPortfolio();
+  else if (isSig) renderSignals();
   else if (!initial) update({ resetPage: false });
   writeHash();
   if (!initial) window.scrollTo({ top: 0 });
@@ -2994,6 +3195,7 @@ async function init() {
   bindSettings();
   bindTheme();
   bindChart();
+  bindSignals();
   registerServiceWorker();
   if (!isMobile() && (store.get('stockratio.filtersOpen', false) || Object.keys(state.f).some((k) => state.f[k] !== DEFAULT_FILTERS[k]))) {
     $('#filters').hidden = false;
@@ -3030,6 +3232,7 @@ async function init() {
   if (openPlanOnStart) openPlan();
   runLocalCheck();
   loadLive().finally(startLivePolling);
+  loadSignals(); // active signals are shown in the detail view
 }
 
 init();

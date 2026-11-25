@@ -50,12 +50,38 @@ Der Score ist eine **relative, rein quantitative Einordnung** – keine Kursprog
 3. Danach läuft die Aktualisierung automatisch **Mo–Fr um 22:17 UTC** (nach US-Börsenschluss).
 4. **Kurse & Charts:** *Actions* → „Kurse & Charts aktualisieren“ → *Run workflow* (einmal von Hand, danach automatisch).
 
+## Signale: Wie gut waren die Kaufsignale? (Tab „Signale“)
+
+Eine Art **Paper-Trading ohne Geld**: Jede Aktie wird ab dem Tag erfasst, an dem sie ein Kaufsignal bekommt, und ihre
+Kursentwicklung seitdem verfolgt. Drei Signal-Arten (umschaltbar):
+
+| Signal | Regel |
+|---|---|
+| **Score ≥ 95** | StockRatio-Score mindestens 95 |
+| **Analysten: Starker Kauf** | Konsens Ø ≤ 1,5 bei mindestens 3 Analysten |
+| **Starkes Kaufsignal** | Score ≥ 90, Analysten mind. „Kaufen“ (≥ 5 Analysten), Bewertung nicht teuer – wie bei den Benachrichtigungen |
+
+- Je Signal: **Startdatum**, Einstiegskurs (Schlusskurs am Signal-Tag), aktueller Kurs, **Entwicklung seit Signal**,
+  **Max. ↑ / Max. ↓** (höchster/tiefster Schlusskurs seitdem), **vs. S&P 500** im selben Zeitraum, Status **aktiv** oder
+  **beendet am …** (mit Entwicklung bis dahin), Score damals und heute. Gemessen wird auch nach dem Ende weiter.
+- **Auswertung nach Haltedauer** – ältere Signale sind aussagekräftiger: Nach **1 Woche, 1 Monat, 3 und 6 Monaten** wie viele
+  Signale im Plus lagen, Ø Entwicklung, Ø gegenüber dem S&P 500 und wie oft der Index geschlagen wurde. Es zählen nur Signale,
+  die die jeweilige Haltedauer schon erreicht haben.
+- Aktive Signale stehen auch in der Detailansicht einer Aktie („Signal Starker Kauf seit …“).
+- **So entsteht es:** Nach jedem Tageslauf schreibt `stockratio/signals.py` den Verlauf fort und speichert ihn im Branch
+  **`signals`** (ein Commit pro Lauf, die Historie bleibt erhalten); die Seite zeigt ihn als `data/signals.json`.
+  Beim allerersten Lauf werden die „Starker Kauf“-Signale der **letzten 3 Monate rückwirkend** aus Yahoos monatlicher
+  Analysten-Historie ermittelt (Startdatum auf den Monat genau, markiert mit „rückwirkend“). Score-Signale lassen sich nicht
+  rekonstruieren und werden ab dem Start erfasst.
+
 ## Aktuelle Kurse & Charts
 
 Kennzahlen und Score werden einmal am Tag berechnet – der **Kurs** dagegen wird laufend nachgeladen:
 
-- Der Workflow „Kurse & Charts aktualisieren“ läuft Mo–Fr **alle 15 Minuten von 06:00 bis 21:45 UTC** (Europa + USA),
-  stündlich für Asien/Pazifik und um 22:20 UTC für die US-Schlusskurse. Er lädt für alle Aktien Kurs, Tagesänderung
+- Der Workflow „Kurse & Charts aktualisieren“ läuft Mo–Fr während der Handelszeit in einer Schleife: **alle 10 Minuten
+  von 06:00 bis 22:25 UTC** (Europa + USA), nachts alle 30 Minuten für Asien/Pazifik. GitHub führt geplante Läufe im
+  15-Minuten-Takt nur unzuverlässig aus – deshalb startet sich der Job vor dem 6-Stunden-Limit selbst neu; die Zeitpläne
+  wecken ihn nur, falls die Kette abreißt. Er lädt für alle Aktien Kurs, Tagesänderung
   und Chartdaten und legt sie im Branch **`live-data`** ab (nur ein Commit, der jedes Mal ersetzt wird).
 - Die Webseite liest diese Daten direkt (raw.githubusercontent.com) und lädt sie alle 5 Minuten neu, solange sie offen ist.
 - Mit dem Kurs werden auch die **kursabhängigen Kennzahlen** angepasst: KGV, Forward-KGV, PEG, KBV, KUV, Marktkapitalisierung,
@@ -63,7 +89,7 @@ Kennzahlen und Score werden einmal am Tag berechnet – der **Kurs** dagegen wir
   „vs. S&P 500“. **Score und Signal** bleiben auf dem Stand der täglichen Berechnung.
 - In der Detailansicht steht die **Uhrzeit des Kurses** (z. B. „Kurs von heute 21:00 Uhr · NasdaqGS“), ein grüner Punkt
   zeigt einen Kurs jünger als 30 Minuten. US-Kurse von Yahoo sind Echtzeit-Kurse, europäische meist 15 Minuten verzögert.
-- GitHub startet geplante Workflows manchmal einige Minuten später – ein Kurs kann also bis zu ca. 20–30 Minuten alt sein.
+- Ein Kurs ist damit meist höchstens ca. 10–15 Minuten alt.
   Für Kurse auf die Sekunde bräuchte es einen eigenen Server bzw. einen kostenpflichtigen Kursdienst.
 
 > Der Workflow veröffentlicht nur vom **Standard-Branch** des Repositories.

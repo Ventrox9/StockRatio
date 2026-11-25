@@ -141,6 +141,9 @@ def extract(symbol: str, qs: dict, fx_to_usd: dict[str, float]) -> dict:
         "tgt": _round(target, 4),
         "up": _round(upside, 4),
         "dist": dist,
+        # analyst distributions 1, 2 and 3 months ago (for the signal history)
+        "distH": [_recommendation_distribution(qs, f"-{m}m") for m in (1, 2, 3)]
+        if any(_recommendation_distribution(qs, f"-{m}m") for m in (1, 2, 3)) else None,
         "rev90": _round(_eps_revision(qs), 4),
         # momentum / risk
         "r52": _round(r52, 4),
@@ -173,9 +176,9 @@ def _eps_revision(qs: dict) -> float | None:
     return None
 
 
-def _recommendation_distribution(qs: dict) -> list[int] | None:
+def _recommendation_distribution(qs: dict, period: str = "0m") -> list[int] | None:
     for t in (qs.get("recommendationTrend") or {}).get("trend") or []:
-        if t.get("period") == "0m":
+        if t.get("period") == period:
             dist = [int(_num(t.get(k)) or 0) for k in ("strongBuy", "buy", "hold", "sell", "strongSell")]
             return dist if sum(dist) else None
     return None

@@ -10,7 +10,7 @@ on:
   push:
 
 permissions:
-  contents: read
+  contents: write # Signal-Verlauf im Branch "signals"
   pages: write
   id-token: write
 
@@ -53,6 +53,30 @@ jobs:
           # Aktien, die heute nicht geladen werden können, kommen aus dem letzten Stand.
           PREVIOUS_DATA: ${{ steps.pages.outputs.base_url }}/data/stocks.json
         run: python -m stockratio.build --workers 6
+
+      - name: Signal-Verlauf fortschreiben (Branch signals → data/signals.json)
+        # Fehler hier verhindern nicht die Veröffentlichung – der Verlauf geht dabei nicht verloren.
+        continue-on-error: true
+        run: |
+          set +e; git ls-remote --exit-code --heads origin signals >/dev/null; rc=$?; set -e
+          if [ "$rc" -eq 0 ]; then
+            git fetch --depth=1 origin signals
+            git worktree add --detach signals FETCH_HEAD
+            parent="-p $(git rev-parse FETCH_HEAD)"
+          elif [ "$rc" -eq 2 ]; then
+            # erster Lauf: leerer Verlauf (Analysten-Signale der letzten 3 Monate werden rekonstruiert)
+            git worktree add --detach signals HEAD
+            git -C signals rm -rq .
+            parent=""
+          else
+            echo "::error::Branch signals nicht erreichbar – Verlauf wird nicht verändert"; exit 1
+          fi
+          python -m stockratio.signals --stocks site/data/stocks.json --state signals/signals.json --out site/data/signals.json
+          git -C signals add -A
+          tree=$(git -C signals write-tree)
+          commit=$(git -C signals -c user.name="github-actions[bot]" -c user.email="41898299+github-actions[bot]@users.noreply.github.com" \
+            commit-tree "$tree" $parent -m "Signale $(date -u +'%Y-%m-%d %H:%M') UTC")
+          git -C signals push -q origin "$commit:refs/heads/signals"
 
       - name: Cache-Busting (CSS/JS-Version = Commit + Datenstand)
         run: |

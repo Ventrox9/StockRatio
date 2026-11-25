@@ -2,14 +2,16 @@ name: Kurse & Charts aktualisieren
 
 # Aktuelle Kurse und Chartdaten für alle Aktien – landen im Branch "live-data",
 # die Webseite lädt sie direkt von dort (raw.githubusercontent.com).
+#
+# GitHub führt geplante Läufe im 15-Minuten-Takt oft nur wenige Male am Tag aus. Deshalb läuft ein
+# gestarteter Job während der Handelszeit selbst in einer Schleife (alle 10 Min., nachts in Asien alle
+# 30 Min.) und startet sich vor dem 6-Stunden-Limit von GitHub neu. Die Zeitpläne unten sind nur der
+# Wecker, falls die Kette einmal abreißt.
 on:
   schedule:
-    # Europa + USA: alle 15 Minuten von 06:00 bis 21:45 UTC (Xetra/London ab 07:00 bzw. 08:00 Uhr, US-Schluss 21:00 UTC)
-    - cron: "*/15 6-21 * * 1-5"
-    # Schlusskurse USA + Kurs-Historie für die Charts
+    - cron: "7,37 * * * 1-5"
+    # nach US-Schluss: Schlusskurse + Kurs-Historie
     - cron: "20 22 * * 1-5"
-    # Asien/Pazifik (Tokio, Hongkong, Sydney): stündlich
-    - cron: "40 0-5 * * 1-5"
   workflow_dispatch:
     inputs:
       history:
@@ -20,6 +22,7 @@ on:
 
 permissions:
   contents: write
+  actions: write # Neustart der Schleife (workflow_dispatch)
 
 concurrency:
   group: live-data
@@ -29,7 +32,7 @@ jobs:
   live:
     if: github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -42,6 +45,8 @@ jobs:
             git worktree add --detach live HEAD
             git -C live rm -rq .
           fi
+          git -C live config user.name "github-actions[bot]"
+          git -C live config user.email "41898299+github-actions[bot]@users.noreply.github.com"
 
       - uses: actions/setup-python@v5
         with:
@@ -51,17 +56,37 @@ jobs:
       - name: Abhängigkeiten installieren
         run: pip install -r requirements.txt
 
-      - name: Kurse & Charts laden
+      - name: Kurse & Charts laden und veröffentlichen (Schleife während der Handelszeit)
         env:
           STOCKS_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/data/stocks.json
-        run: python -m stockratio.live --out live --history "${{ inputs.history || 'auto' }}"
-
-      - name: Veröffentlichen (Branch live-data, nur ein Commit – keine wachsende Historie)
-        working-directory: live
+          GH_TOKEN: ${{ github.token }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898299+github-actions[bot]@users.noreply.github.com"
-          git checkout -q --orphan live-new
-          git add -A
-          git commit -q -m "Kurse $(date -u +'%Y-%m-%d %H:%M') UTC"
-          git push -q --force origin HEAD:refs/heads/live-data
+          stop=$(( $(date +%s) + 5*3600 + 30*60 ))   # GitHub bricht Jobs nach 6 Stunden ab
+          history="${{ inputs.history || 'auto' }}"
+          # Handelszeit: Mo–Fr 00:00–22:25 UTC (Asien ab 00:00, US-Schluss 21:00 bzw. 22:00 im Winter)
+          in_session() { [ "$(date -u +%u)" -le 5 ] && [ "$(date -u +%H%M)" -lt 2225 ]; }
+          publish() {
+            git -C live add -A
+            tree=$(git -C live write-tree)
+            commit=$(git -C live commit-tree "$tree" -m "Kurse $(date -u +'%Y-%m-%d %H:%M') UTC")
+            # nur ein Commit, der jedes Mal ersetzt wird – keine wachsende Historie
+            git -C live push -q --force origin "$commit:refs/heads/live-data"
+          }
+          while :; do
+            if python -m stockratio.live --out live --history "$history"; then
+              publish && echo "veröffentlicht $(date -u +%H:%M) UTC"
+            else
+              echo "::warning::Kurse konnten um $(date -u +%H:%M) UTC nicht geladen werden"
+            fi
+            history=auto
+            in_session || break
+            now=$(date +%s)
+            step=600; [ "$(date -u +%H)" -lt 6 ] && step=1800
+            next=$(( (now / step + 1) * step ))
+            if [ "$next" -ge "$stop" ]; then
+              echo "Zeitlimit erreicht – starte den Workflow neu"
+              gh workflow run live.yml --ref "$GITHUB_REF_NAME" || echo "::warning::Neustart fehlgeschlagen"
+              break
+            fi
+            sleep $(( next - now ))
+          done
